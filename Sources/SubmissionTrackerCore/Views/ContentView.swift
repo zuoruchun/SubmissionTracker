@@ -20,8 +20,8 @@ public struct ContentView: View {
     }
 
     enum ViewMode: String, CaseIterable, Identifiable {
-        case detail = "稿件详情"
-        case timeline = "全局动态"
+        case detail
+        case timeline
         var id: String { rawValue }
     }
 
@@ -43,7 +43,12 @@ public struct ContentView: View {
                     })
                 } else {
                     if let selected = selection ?? allManuscripts.first {
-                        ManuscriptDetailView(manuscript: selected)
+                        ManuscriptDetailView(
+                            manuscript: selected,
+                            onBackToTimeline: {
+                                viewModeRaw = "timeline"
+                            }
+                        )
                     } else {
                         ContentUnavailableView("暂无稿件", systemImage: "book.closed",
                             description: Text("点击左侧右上角 + 新增第一篇投稿记录"))

@@ -10,6 +10,8 @@ import AppKit
 /// 状态时间线、备注、截止日期。
 struct ManuscriptDetailView: View {
     @Bindable var manuscript: Manuscript
+    var onBackToTimeline: (() -> Void)? = nil
+
     @Environment(\.modelContext) private var context
     @State private var showingEditForm = false
     @State private var showingAddStatus = false
@@ -46,7 +48,18 @@ struct ManuscriptDetailView: View {
         .themedBackground()
         .navigationTitle(manuscript.title)
         .toolbar {
-            ToolbarItemGroup {
+            if let onBack = onBackToTimeline {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        onBack()
+                    } label: {
+                        Image(systemName: "chevron.backward")
+                    }
+                    .help("返回全局动态")
+                }
+            }
+
+            ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     showingAddStatus = true
                 } label: {

@@ -308,6 +308,8 @@ struct TimelineCardRow: View {
     let onOpenAttachment: (Attachment) -> Void
     let onSelectManuscript: () -> Void
 
+    @State private var isHoveringTitle = false
+
     private var daysAgoText: String {
         let days = Calendar.current.dateComponents([.day], from: item.date, to: Date()).day ?? 0
         if days == 0 { return "今天" }
@@ -339,7 +341,7 @@ struct TimelineCardRow: View {
 
             // 右侧动态卡片
             VStack(alignment: .leading, spacing: 6) {
-                // 顶部：日期 · 状态徽章 · 阶段 · 距今天数 · 详情入口
+                // 顶部：日期 · 状态徽章 · 阶段 · 距今天数
                 HStack(spacing: 8) {
                     AppTheme.statusBadge(item.status)
 
@@ -356,23 +358,14 @@ struct TimelineCardRow: View {
                         .font(AppTheme.monoLabel(11))
                         .foregroundStyle(.tertiary)
 
-                    Text("(\((daysAgoText)))")
+                    Text("(\(daysAgoText))")
                         .font(AppTheme.monoLabel(10))
                         .foregroundStyle(.tertiary)
 
                     Spacer()
-
-                    Button {
-                        onSelectManuscript()
-                    } label: {
-                        Label("查看论文详情", systemImage: "doc.plaintext")
-                            .font(AppTheme.monoLabel(10))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
                 }
 
-                // 论文标题（可点击切换至该论文）
+                // 论文标题（鼠标悬浮出现下划线，点击进入该论文详情）
                 Button {
                     onSelectManuscript()
                 } label: {
@@ -380,10 +373,14 @@ struct TimelineCardRow: View {
                         .font(AppTheme.serifBody(15))
                         .fontWeight(.medium)
                         .lineLimit(2)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(isHoveringTitle ? AppTheme.navy : .primary)
+                        .underline(isHoveringTitle)
                         .multilineTextAlignment(.leading)
                 }
                 .buttonStyle(.plain)
+                .onHover { hovering in
+                    isHoveringTitle = hovering
+                }
 
                 // 期刊信息
                 HStack(spacing: 6) {
