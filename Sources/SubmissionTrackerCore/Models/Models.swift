@@ -30,6 +30,9 @@ final class Manuscript {
     var id: UUID
     var title: String
     var venue: String
+    var manuscriptNumber: String = ""
+    var submissionSystemURL: String = ""
+    var authorGuideURL: String = ""
     /// 存储枚举 rawValue（CloudKit 要求）；通过计算属性暴露枚举。
     var venueTypeRaw: String
     var submissionDate: Date
@@ -52,6 +55,9 @@ final class Manuscript {
         title: String,
         venue: String,
         venueType: VenueType = .journal,
+        manuscriptNumber: String = "",
+        submissionSystemURL: String = "",
+        authorGuideURL: String = "",
         submissionDate: Date = .now,
         currentStatus: ManuscriptStatus = .draft,
         fileBookmark: Data = Data(),
@@ -64,6 +70,9 @@ final class Manuscript {
         self.id = UUID()
         self.title = title
         self.venue = venue
+        self.manuscriptNumber = manuscriptNumber
+        self.submissionSystemURL = submissionSystemURL
+        self.authorGuideURL = authorGuideURL
         self.venueTypeRaw = venueType.rawValue
         self.submissionDate = submissionDate
         self.currentStatusRaw = currentStatus.rawValue
@@ -101,14 +110,26 @@ final class Manuscript {
         (attachments ?? []).sorted { $0.addedDate > $1.addedDate }
     }
 
+    /// 未归属于任何状态节点的独立附件
+    var unassignedAttachments: [Attachment] {
+        sortedAttachments.filter { $0.statusLog == nil }
+    }
+
     /// 标记为被修改（刷新 updatedAt）
     func touch() {
         updatedAt = .now
     }
 
     /// 追加一条状态变更记录；若新状态与 currentStatus 不同，则同步更新当前状态。
-    func appendStatusLog(_ newStatus: ManuscriptStatus, note: String = "", context: ModelContext) {
-        let entry = StatusLogEntry(date: .now, status: newStatus, note: note)
+    @discardableResult
+    func appendStatusLog(
+        _ newStatus: ManuscriptStatus,
+        date: Date = .now,
+        stage: String = "",
+        note: String = "",
+        context: ModelContext
+    ) -> StatusLogEntry {
+        let entry = StatusLogEntry(date: date, status: newStatus, stage: stage, note: note)
         if currentStatusRaw != newStatus.rawValue {
             currentStatusRaw = newStatus.rawValue
         }
@@ -117,6 +138,7 @@ final class Manuscript {
         entry.manuscript = self
         touch()
         try? context.save()
+        return entry
     }
 }
 
@@ -127,19 +149,37 @@ final class StatusLogEntry {
     var id: UUID
     var date: Date
     var statusRaw: String
+    var stageRaw: String = ""
     var note: String
     var manuscript: Manuscript?
+    var attachments: [Attachment]?
 
-    init(date: Date = .now, status: ManuscriptStatus, note: String = "") {
-        self.id = UUID()
+    init(
+        date: Date = .now,
+        status: ManuscriptStatus,
+        stage: String = "",
+        note: String = "",
+        id: UUID = UUID()
+    ) {
+        self.id = id
         self.date = date
         self.statusRaw = status.rawValue
+        self.stageRaw = stage
         self.note = note
     }
 
     var status: ManuscriptStatus {
         get { ManuscriptStatus(rawValue: statusRaw) ?? .draft }
         set { statusRaw = newValue.rawValue }
+    }
+
+    var stage: String {
+        get { stageRaw }
+        set { stageRaw = newValue }
+    }
+
+    var sortedAttachments: [Attachment] {
+        (attachments ?? []).sorted { $0.addedDate > $1.addedDate }
     }
 }
 
@@ -150,13 +190,31 @@ final class Attachment {
     @Attribute(.externalStorage) var fileBookmark: Data
     var id: UUID
     var filePath: String
+    var relativePath: String = ""
+    var originalFileName: String = ""
+    var displayName: String = ""
+    var fileSize: Int64 = 0
+    var sha256Hash: String = ""
+    var mimeType: String = "application/pdf"
+    var syncStateRaw: String = "local"
+    var lastSyncedHash: String = ""
     var fileTypeRaw: String
     var addedDate: Date
+    var createdAt: Date = Date.now
+    var updatedAt: Date = Date.now
     var manuscript: Manuscript?
+    var statusLog: StatusLogEntry?
 
     init(
-        fileBookmark: Data,
-        filePath: String,
+        fileBookmark: Data = Data(),
+        filePath: String = "",
+        relativePath: String = "",
+        originalFileName: String = "",
+        displayName: String = "",
+        fileSize: Int64 = 0,
+        sha256Hash: String = "",
+        mimeType: String = "application/pdf",
+        syncState: SyncState = .local,
         fileType: AttachmentFileType,
         addedDate: Date = .now,
         id: UUID = UUID()
@@ -164,12 +222,30 @@ final class Attachment {
         self.id = id
         self.fileBookmark = fileBookmark
         self.filePath = filePath
+        self.relativePath = relativePath
+        self.originalFileName = originalFileName
+        self.displayName = displayName
+        self.fileSize = fileSize
+        self.sha256Hash = sha256Hash
+        self.mimeType = mimeType
+        self.syncStateRaw = syncState.rawValue
         self.fileTypeRaw = fileType.rawValue
         self.addedDate = addedDate
+        self.createdAt = addedDate
+        self.updatedAt = addedDate
     }
 
     var fileType: AttachmentFileType {
         get { AttachmentFileType(rawValue: fileTypeRaw) ?? .supplementary }
         set { fileTypeRaw = newValue.rawValue }
+    }
+
+    var syncState: SyncState {
+        get { SyncState(rawValue: syncStateRaw) ?? .local }
+        set { syncStateRaw = newValue.rawValue }
+    }
+
+    func touch() {
+        updatedAt = .now
     }
 }

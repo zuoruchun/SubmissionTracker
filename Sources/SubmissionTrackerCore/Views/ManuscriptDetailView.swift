@@ -13,8 +13,24 @@ struct ManuscriptDetailView: View {
     @Environment(\.modelContext) private var context
     @State private var showingEditForm = false
     @State private var showingAddStatus = false
-    @State private var pendingAttachment: (bookmark: Data, path: String)?
+
+    // 附件选择与目标节点绑定
+    @State private var targetStatusLog: StatusLogEntry? = nil
+    @State private var pendingFile: (bookmark: Data, path: String, url: URL)?
     @State private var showingAttachmentTypePicker = false
+
+    // PDF 预览
+    @State private var previewAttachment: Attachment?
+    @State private var previewURL: URL?
+    @State private var previewTitle: String = ""
+
+    // 覆盖确认
+    @State private var overwriteAlertCandidate: (file: (bookmark: Data, path: String, url: URL), type: AttachmentFileType, log: StatusLogEntry?, existingAtt: Attachment)?
+    @State private var showingOverwriteAlert = false
+
+    // 删除确认
+    @State private var attachmentToDelete: Attachment?
+    @State private var showingDeleteAttachmentAlert = false
 
     var body: some View {
         ScrollView {
@@ -65,32 +81,110 @@ struct ManuscriptDetailView: View {
         }
         .sheet(isPresented: $showingAttachmentTypePicker) {
             AttachmentTypePrompt { type in
-                commitAttachment(type)
+                if let file = pendingFile {
+                    processAttachmentImport(file: file, type: type, log: targetStatusLog)
+                }
                 showingAttachmentTypePicker = false
             }
+        }
+        .sheet(item: $previewAttachment) { att in
+            if let url = previewURL {
+                PDFViewerSheet(
+                    fileURL: url,
+                    title: previewTitle,
+                    subtitle: "\(att.fileType.displayNameZh) · \(att.originalFileName)"
+                )
+            }
+        }
+        .alert("确认覆盖已有附件？", isPresented: $showingOverwriteAlert) {
+            Button("取消", role: .cancel) { overwriteAlertCandidate = nil }
+            Button("确认覆盖", role: .destructive) {
+                if let cand = overwriteAlertCandidate {
+                    commitAttachmentImport(file: cand.file, type: cand.type, log: cand.log, existingToReplace: cand.existingAtt)
+                }
+                overwriteAlertCandidate = nil
+            }
+        } message: {
+            if let cand = overwriteAlertCandidate {
+                Text("该节点已存在【\(cand.type.displayNameZh)】：\(cand.existingAtt.originalFileName)。\n确认后旧版本将安全备份至 App 回收站，并更新为新文件：\(cand.file.url.lastPathComponent)。")
+            }
+        }
+        .alert("确认移除该附件？", isPresented: $showingDeleteAttachmentAlert) {
+            Button("取消", role: .cancel) { attachmentToDelete = nil }
+            Button("确认移除", role: .destructive) {
+                if let att = attachmentToDelete {
+                    removeAttachment(att)
+                }
+                attachmentToDelete = nil
+            }
+        } message: {
+            Text("将从 App 托管目录中移除该附件（移入安全回收站），外部原文件不会被删除。")
         }
     }
 
     // MARK: - 头部
 
+    private var daysSinceLastStatus: Int {
+        guard let latest = manuscript.sortedStatusLogs.first else {
+            return Calendar.current.dateComponents([.day], from: manuscript.submissionDate, to: Date()).day ?? 0
+        }
+        return Calendar.current.dateComponents([.day], from: latest.date, to: Date()).day ?? 0
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(manuscript.title)
                 .font(AppTheme.serifTitle(26))
+
             HStack(spacing: 10) {
                 Label(manuscript.venue, systemImage: AppTheme.venueIcon(manuscript.venueType))
                     .font(AppTheme.serifBody(13))
                     .foregroundStyle(.secondary)
+
                 AppTheme.statusBadge(manuscript.currentStatus)
+
+                if !manuscript.manuscriptNumber.isEmpty {
+                    Text("#\(manuscript.manuscriptNumber)")
+                        .font(AppTheme.monoLabel(11))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+
+                Text("距上次状态变化 \(daysSinceLastStatus) 天")
+                    .font(AppTheme.monoLabel(11))
+                    .foregroundStyle(.secondary)
+
                 Text(manuscript.submissionDate, format: .dateTime.year().month().day())
-                    .font(AppTheme.monoLabel(12))
+                    .font(AppTheme.monoLabel(11))
                     .foregroundStyle(.tertiary)
             }
+
+            // 快捷外链（投稿系统、作者指南）
+            if !manuscript.submissionSystemURL.isEmpty || !manuscript.authorGuideURL.isEmpty {
+                HStack(spacing: 12) {
+                    if let url = URL(string: manuscript.submissionSystemURL), !manuscript.submissionSystemURL.isEmpty {
+                        Link(destination: url) {
+                            Label("打开投稿系统 ↗", systemImage: "arrow.up.right.square")
+                                .font(AppTheme.monoLabel(11))
+                        }
+                    }
+                    if let url = URL(string: manuscript.authorGuideURL), !manuscript.authorGuideURL.isEmpty {
+                        Link(destination: url) {
+                            Label("作者指南 ↗", systemImage: "book")
+                                .font(AppTheme.monoLabel(11))
+                        }
+                    }
+                }
+                .padding(.top, 2)
+            }
+
             if !manuscript.collaborators.items.isEmpty {
                 Text("合作者：\(manuscript.collaborators.items.joined(separator: ", "))")
                     .font(AppTheme.serifBody(12))
                     .foregroundStyle(.secondary)
             }
+
             if !manuscript.tags.items.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(manuscript.tags.items, id: \.self) { tag in
@@ -102,6 +196,7 @@ struct ManuscriptDetailView: View {
                     }
                 }
             }
+
             if let deadline = manuscript.deadlineDate {
                 let days = Calendar.current.dateComponents([.day], from: Date(), to: deadline).day ?? 0
                 let remainText = days >= 0 ? "剩 \(days) 天" : "已逾期 \(abs(days)) 天"
@@ -123,7 +218,7 @@ struct ManuscriptDetailView: View {
                 sectionTitle("论文文件与附件")
                 Spacer()
                 Button {
-                    addAttachment()
+                    startAddAttachment(targetLog: nil)
                 } label: {
                     Label("添加附件 / 补充材料", systemImage: "plus.circle")
                 }
@@ -133,31 +228,20 @@ struct ManuscriptDetailView: View {
             }
 
             let attachments = manuscript.sortedAttachments
-            let hasMainFile = !manuscript.filePath.isEmpty
-            let hasAttachments = !attachments.isEmpty
 
-            if !hasMainFile && !hasAttachments {
+            if attachments.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("暂未关联任何文件（支持关联论文 TeX/PDF 主手稿、审稿意见、回复信或补充材料）")
+                    Text("暂未关联任何本地托管附件（支持导入 TeX/PDF 主手稿、审稿意见、回复信或补充材料）")
                         .font(AppTheme.serifBody(12))
                         .foregroundStyle(.secondary)
                     HStack(spacing: 10) {
                         Button {
-                            chooseMainFile()
+                            startAddAttachment(targetLog: nil)
                         } label: {
-                            Label("关联主手稿 / PDF…", systemImage: "doc.badge.plus")
+                            Label("导入并绑定附件…", systemImage: "doc.badge.plus")
                         }
                         .font(AppTheme.monoLabel(11))
                         .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-
-                        Button {
-                            addAttachment()
-                        } label: {
-                            Label("添加附件…", systemImage: "paperclip")
-                        }
-                        .font(AppTheme.monoLabel(11))
-                        .buttonStyle(.bordered)
                         .controlSize(.small)
                     }
                     .padding(.top, 2)
@@ -168,87 +252,25 @@ struct ManuscriptDetailView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
                 VStack(spacing: 8) {
-                    // 主手稿文件条目
-                    if hasMainFile {
-                        HStack(spacing: 8) {
-                            Text("主手稿")
-                                .font(AppTheme.monoLabel(11))
-                                .padding(.horizontal, 7).padding(.vertical, 2)
-                                .background(AppTheme.navy.opacity(0.12))
-                                .foregroundStyle(AppTheme.navy)
-                                .clipShape(Capsule())
-
-                            Image(systemName: "doc.text.fill")
-                                .foregroundStyle(AppTheme.navy)
-
-                            Text(displayFileName)
-                                .font(AppTheme.monoLabel(12))
-                                .lineLimit(1)
-
-                            Spacer()
-
-                            if hasResolvableFile {
-                                Button("在 Finder 中显示") {
-                                    FileService.reveal(bookmark: manuscript.fileBookmark,
-                                                       fallbackPath: manuscript.filePath)
-                                }
-                                .font(AppTheme.monoLabel(10))
-                                .buttonStyle(.bordered)
-                                .controlSize(.mini)
-                            }
-
-                            Button {
-                                chooseMainFile()
-                            } label: {
-                                Image(systemName: "arrow.triangle.2.circlepath")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                            .help("更换主手稿文件")
-
-                            Button {
-                                removeMainFile()
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .buttonStyle(.plain)
-                            .help("移除关联")
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 10)
-                        .background(Color.primary.opacity(0.04))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                    } else {
-                        HStack {
-                            Text("未关联主手稿 / PDF")
-                                .font(AppTheme.monoLabel(11))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("关联主手稿…") {
-                                chooseMainFile()
-                            }
-                            .font(AppTheme.monoLabel(10))
-                            .buttonStyle(.bordered)
-                            .controlSize(.mini)
-                        }
-                        .padding(.vertical, 4)
-                        .padding(.horizontal, 10)
-                    }
-
-                    // 附件列表
                     ForEach(attachments) { att in
                         HStack(spacing: 8) {
                             Text(att.fileType.displayNameZh)
                                 .font(AppTheme.monoLabel(11))
                                 .padding(.horizontal, 7).padding(.vertical, 2)
-                                .background(Color.primary.opacity(0.08))
+                                .background(AppTheme.navy.opacity(0.1))
+                                .foregroundStyle(AppTheme.navy)
                                 .clipShape(Capsule())
 
-                            Image(systemName: "paperclip")
-                                .foregroundStyle(.secondary)
+                            if let stage = att.statusLog?.stage, !stage.isEmpty {
+                                Text(stage)
+                                    .font(AppTheme.monoLabel(10))
+                                    .foregroundStyle(.secondary)
+                            }
 
-                            Text(URL(fileURLWithPath: att.filePath).lastPathComponent)
+                            Image(systemName: "doc.text.fill")
+                                .foregroundStyle(AppTheme.navy)
+
+                            Text(att.displayName.isEmpty ? att.originalFileName : att.displayName)
                                 .font(AppTheme.monoLabel(12))
                                 .lineLimit(1)
 
@@ -258,60 +280,60 @@ struct ManuscriptDetailView: View {
                                 .font(AppTheme.monoLabel(10))
                                 .foregroundStyle(.tertiary)
 
-                            Button("在 Finder 中显示") {
-                                FileService.reveal(bookmark: att.fileBookmark,
-                                                   fallbackPath: att.filePath)
+                            // PDFKit 快速查看
+                            Button("查看") {
+                                openPDFViewer(for: att)
+                            }
+                            .font(AppTheme.monoLabel(10))
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.mini)
+
+                            Button("Finder") {
+                                if let url = FileService.resolveURL(for: att) {
+                                    FileService.reveal(url: url)
+                                }
                             }
                             .font(AppTheme.monoLabel(10))
                             .buttonStyle(.bordered)
                             .controlSize(.mini)
 
                             Button {
-                                removeAttachment(att)
+                                attachmentToDelete = att
+                                showingDeleteAttachmentAlert = true
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundStyle(.tertiary)
                             }
                             .buttonStyle(.plain)
+                            .help("移除附件")
                         }
                         .padding(.vertical, 6)
                         .padding(.horizontal, 10)
-                        .background(Color.primary.opacity(0.02))
+                        .background(Color.primary.opacity(0.03))
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                 }
-
-                // QuickLook 预览（若主稿件存在）
-                if let url = resolvedFileURL {
-                    filePreview(for: url)
-                        .padding(.top, 4)
-                }
             }
         }
-    }
-
-    private var displayFileName: String {
-        URL(fileURLWithPath: manuscript.filePath).lastPathComponent
-    }
-
-    private var hasResolvableFile: Bool {
-        resolvedFileURL != nil || (!manuscript.filePath.isEmpty && FileManager.default.fileExists(atPath: manuscript.filePath))
-    }
-
-    private var resolvedFileURL: URL? {
-        FileService.previewURL(bookmark: manuscript.fileBookmark, fallbackPath: manuscript.filePath)
-    }
-
-    @ViewBuilder
-    private func filePreview(for url: URL) -> some View {
-        QuickLookPreviewPane(url: url)
     }
 
     // MARK: - 状态时间线
 
     private var timelineSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("状态时间线")
+            HStack {
+                sectionTitle("状态时间线")
+                Spacer()
+                Button {
+                    showingAddStatus = true
+                } label: {
+                    Label("追加状态记录", systemImage: "plus.circle")
+                }
+                .font(AppTheme.monoLabel(11))
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
             let logs = manuscript.sortedStatusLogs
             if logs.isEmpty {
                 Text("尚无状态记录")
@@ -340,16 +362,66 @@ struct ManuscriptDetailView: View {
                                 }
                             }
                             .frame(width: 10)
-                            VStack(alignment: .leading, spacing: 3) {
+
+                            VStack(alignment: .leading, spacing: 5) {
                                 HStack(spacing: 8) {
                                     AppTheme.statusBadge(log.status)
+
+                                    if !log.stage.isEmpty {
+                                        Text(log.stage)
+                                            .font(AppTheme.monoLabel(11))
+                                            .padding(.horizontal, 6).padding(.vertical, 1)
+                                            .background(Color.primary.opacity(0.08))
+                                            .clipShape(Capsule())
+                                    }
+
                                     Text(log.date, format: .dateTime.year().month().day())
                                         .font(AppTheme.monoLabel(11))
                                         .foregroundStyle(.tertiary)
+
+                                    Spacer()
+
+                                    // 给具体节点添加附件的入口
+                                    Button {
+                                        startAddAttachment(targetLog: log)
+                                    } label: {
+                                        Label("绑定附件", systemImage: "paperclip.badge.ellipsis")
+                                    }
+                                    .font(AppTheme.monoLabel(10))
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.mini)
                                 }
+
                                 if !log.note.isEmpty {
                                     Text(log.note)
                                         .font(AppTheme.serifBody(13))
+                                }
+
+                                // 节点绑定的附件 Chips (带 PDFKit 预览)
+                                let logAtts = log.sortedAttachments
+                                if !logAtts.isEmpty {
+                                    HStack(spacing: 6) {
+                                        ForEach(logAtts) { att in
+                                            Button {
+                                                openPDFViewer(for: att)
+                                            } label: {
+                                                HStack(spacing: 4) {
+                                                    Image(systemName: "doc.text.fill")
+                                                        .font(.system(size: 10))
+                                                    Text(att.displayName.isEmpty ? att.fileType.displayNameZh : att.displayName)
+                                                        .font(AppTheme.monoLabel(10))
+                                                }
+                                                .padding(.horizontal, 7)
+                                                .padding(.vertical, 3)
+                                                .background(AppTheme.navy.opacity(0.1))
+                                                .foregroundStyle(AppTheme.navy)
+                                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                                            }
+                                            .buttonStyle(.plain)
+                                            .help("点击在 App 内查看 PDF: \(att.originalFileName)")
+                                        }
+                                    }
+                                    .padding(.top, 2)
                                 }
                             }
                             .padding(.bottom, 16)
@@ -378,61 +450,129 @@ struct ManuscriptDetailView: View {
             .font(AppTheme.serifTitle(17))
     }
 
-    // MARK: - 操作
+    // MARK: - 操作与附件处理 (目标 A & C)
 
-    private func chooseMainFile() {
+    private func startAddAttachment(targetLog: StatusLogEntry?) {
+        self.targetStatusLog = targetLog
         Task {
             guard let picked = await FileService.chooseFile(allowsMultipleSelection: false) else { return }
             guard let first = picked.first else { return }
-            manuscript.fileBookmark = first.bookmark
-            manuscript.filePath = first.path
+            self.pendingFile = first
+            self.showingAttachmentTypePicker = true
+        }
+    }
+
+    private func processAttachmentImport(
+        file: (bookmark: Data, path: String, url: URL),
+        type: AttachmentFileType,
+        log: StatusLogEntry?
+    ) {
+        // 槽位冲突检测: (manuscript, log, type)
+        let existingAtt = (manuscript.attachments ?? []).first { att in
+            att.statusLog?.id == log?.id && att.fileType == type
+        }
+
+        if let existing = existingAtt {
+            // 已存在同槽位文件，弹出确认覆盖
+            overwriteAlertCandidate = (file: file, type: type, log: log, existingAtt: existing)
+            showingOverwriteAlert = true
+        } else {
+            commitAttachmentImport(file: file, type: type, log: log, existingToReplace: nil)
+        }
+    }
+
+    private func commitAttachmentImport(
+        file: (bookmark: Data, path: String, url: URL),
+        type: AttachmentFileType,
+        log: StatusLogEntry?,
+        existingToReplace: Attachment?
+    ) {
+        let stagePrefix = log?.stage.isEmpty == false ? "[\(log!.stage)] " : ""
+        let dispName = "\(stagePrefix)\(file.url.lastPathComponent)"
+
+        do {
+            let info = try FileService.importManagedCopy(
+                from: file.url,
+                manuscriptID: manuscript.id,
+                statusLogID: log?.id,
+                fileType: type,
+                customDisplayName: dispName
+            )
+
+            if let existing = existingToReplace {
+                // 覆盖现有记录
+                existing.relativePath = info.relativePath
+                existing.originalFileName = info.originalFileName
+                existing.displayName = info.displayName
+                existing.fileSize = info.fileSize
+                existing.sha256Hash = info.sha256Hash
+                existing.mimeType = info.mimeType
+                existing.syncState = .local
+                existing.touch()
+            } else {
+                // 新建记录
+                let att = Attachment(
+                    relativePath: info.relativePath,
+                    originalFileName: info.originalFileName,
+                    displayName: info.displayName,
+                    fileSize: info.fileSize,
+                    sha256Hash: info.sha256Hash,
+                    mimeType: info.mimeType,
+                    syncState: .local,
+                    fileType: type,
+                    addedDate: log?.date ?? .now
+                )
+                att.manuscript = manuscript
+                att.statusLog = log
+                if manuscript.attachments == nil { manuscript.attachments = [] }
+                manuscript.attachments?.append(att)
+                if let l = log {
+                    if l.attachments == nil { l.attachments = [] }
+                    l.attachments?.append(att)
+                }
+            }
+
             manuscript.touch()
             try? context.save()
+            WebDAVSyncService.shared.autoSyncIfNeeded(context: context)
+        } catch {
+            print("Import attachment failed: \(error)")
         }
-    }
 
-    private func removeMainFile() {
-        manuscript.fileBookmark = Data()
-        manuscript.filePath = ""
-        manuscript.touch()
-        try? context.save()
-    }
-
-    private func addAttachment() {
-        Task {
-            guard let picked = await FileService.chooseFile(allowsMultipleSelection: false) else { return }
-            guard let first = picked.first else { return }
-            pendingAttachment = first
-            showingAttachmentTypePicker = true
-        }
-    }
-
-    private func commitAttachment(_ type: AttachmentFileType) {
-        guard let item = pendingAttachment else { return }
-        let att = Attachment(
-            fileBookmark: item.bookmark,
-            filePath: item.path,
-            fileType: type
-        )
-        if manuscript.attachments == nil { manuscript.attachments = [] }
-        manuscript.attachments?.append(att)
-        att.manuscript = manuscript
-        manuscript.touch()
-        try? context.save()
-        pendingAttachment = nil
+        pendingFile = nil
+        targetStatusLog = nil
     }
 
     private func removeAttachment(_ att: Attachment) {
+        FileService.deleteManagedCopy(for: att.relativePath)
         manuscript.attachments?.removeAll { $0.id == att.id }
+        if let l = att.statusLog {
+            l.attachments?.removeAll { $0.id == att.id }
+        }
         att.manuscript = nil
+        att.statusLog = nil
         context.delete(att)
         manuscript.touch()
         try? context.save()
+        WebDAVSyncService.shared.autoSyncIfNeeded(context: context)
+    }
+
+    private func openPDFViewer(for att: Attachment) {
+        if let url = FileService.resolveURL(for: att) {
+            previewURL = url
+            previewTitle = manuscript.title
+            previewAttachment = att
+        }
     }
 
     private func deleteManuscript() {
+        // 清理托管的所有文件
+        for att in (manuscript.attachments ?? []) {
+            FileService.deleteManagedCopy(for: att.relativePath)
+        }
         context.delete(manuscript)
         try? context.save()
+        WebDAVSyncService.shared.autoSyncIfNeeded(context: context)
     }
 
     // 导出

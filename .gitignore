@@ -36,3 +36,5 @@ scratch/
 *.bak
 *.tmp
 .env
+归档.zip
+*.zip

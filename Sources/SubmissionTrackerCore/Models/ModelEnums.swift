@@ -128,3 +128,51 @@ enum AttachmentFileType: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 }
+
+// MARK: - Sync State
+
+/// 本地已保存 / 待同步 / 同步中 / 已同步 / 同步失败
+public enum SyncState: String, Codable, CaseIterable, Identifiable, Sendable {
+    case local
+    case pending
+    case syncing
+    case synced
+    case failed
+
+    public var id: String { rawValue }
+
+    public var displayNameZh: String {
+        switch self {
+        case .local: return "本地已保存"
+        case .pending: return "待同步"
+        case .syncing: return "同步中"
+        case .synced: return "已同步"
+        case .failed: return "同步失败"
+        }
+    }
+}
+
+// MARK: - Revision Stage
+
+/// 投稿/修改阶段轮次
+public enum RevisionStage: String, Codable, CaseIterable, Identifiable, Sendable {
+    case r0 = "R0"
+    case r1 = "R1"
+    case r2 = "R2"
+    case r3 = "R3"
+    case accepted = "录用"
+    case other = "其他"
+
+    public var id: String { rawValue }
+
+    public var displayNameZh: String {
+        switch self {
+        case .r0: return "初始投稿 (R0)"
+        case .r1: return "第一轮修改 (R1)"
+        case .r2: return "第二轮修改 (R2)"
+        case .r3: return "第三轮修改 (R3)"
+        case .accepted: return "最终录用/终稿"
+        case .other: return "其他阶段"
+        }
+    }
+}

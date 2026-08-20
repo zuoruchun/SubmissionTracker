@@ -91,41 +91,61 @@ public enum ExportService {
         return out.joined(separator: "\n")
     }
 
-    // MARK: - JSON 备份
+    // MARK: - JSON 备份 (v2)
 
-    /// 备份用的可序列化快照（不含文件 bookmark 之外的私有句柄）。
+    /// 备份用的可序列化快照（包含稿件、状态节点及附件相对路径与哈希清单）。
     struct Backup: Codable {
-        var version: Int = 1
-        var exportedAt: Date
-        var manuscripts: [ManuscriptSnapshot]
+        public var version: Int = 2
+        public var exportedAt: Date
+        public var manuscripts: [ManuscriptSnapshot]
 
-        struct ManuscriptSnapshot: Codable {
-            var id: UUID
-            var title: String
-            var venue: String
-            var venueTypeRaw: String
-            var submissionDate: Date
-            var currentStatusRaw: String
-            var filePath: String
-            var notes: String
-            var collaborators: [String]
-            var tags: [String]
-            var deadlineDate: Date?
-            var createdAt: Date
-            var updatedAt: Date
-            var statusLogs: [LogSnapshot]
+        public struct ManuscriptSnapshot: Codable {
+            public var id: UUID
+            public var title: String
+            public var venue: String
+            public var venueTypeRaw: String
+            public var manuscriptNumber: String?
+            public var submissionSystemURL: String?
+            public var authorGuideURL: String?
+            public var submissionDate: Date
+            public var currentStatusRaw: String
+            public var filePath: String
+            public var notes: String
+            public var collaborators: [String]
+            public var tags: [String]
+            public var deadlineDate: Date?
+            public var createdAt: Date
+            public var updatedAt: Date
+            public var statusLogs: [LogSnapshot]
+            public var attachments: [AttachmentSnapshot]?
 
-            struct LogSnapshot: Codable {
-                var id: UUID
-                var date: Date
-                var statusRaw: String
-                var note: String
+            public struct LogSnapshot: Codable {
+                public var id: UUID
+                public var date: Date
+                public var statusRaw: String
+                public var stageRaw: String?
+                public var note: String
+            }
+
+            public struct AttachmentSnapshot: Codable {
+                public var id: UUID
+                public var statusLogId: UUID?
+                public var relativePath: String
+                public var originalFileName: String
+                public var displayName: String
+                public var fileTypeRaw: String
+                public var fileSize: Int64
+                public var sha256Hash: String
+                public var mimeType: String
+                public var addedDate: Date
+                public var updatedAt: Date
             }
         }
     }
 
     static func backup(for manuscripts: [Manuscript]) -> Data? {
         let snapshot = Backup(
+            version: 2,
             exportedAt: .now,
             manuscripts: manuscripts.map { m in
                 Backup.ManuscriptSnapshot(
@@ -133,6 +153,9 @@ public enum ExportService {
                     title: m.title,
                     venue: m.venue,
                     venueTypeRaw: m.venueTypeRaw,
+                    manuscriptNumber: m.manuscriptNumber,
+                    submissionSystemURL: m.submissionSystemURL,
+                    authorGuideURL: m.authorGuideURL,
                     submissionDate: m.submissionDate,
                     currentStatusRaw: m.currentStatusRaw,
                     filePath: m.filePath,
@@ -142,12 +165,28 @@ public enum ExportService {
                     deadlineDate: m.deadlineDate,
                     createdAt: m.createdAt,
                     updatedAt: m.updatedAt,
-                    statusLogs: m.sortedStatusLogs.map {
+                    statusLogs: m.sortedStatusLogs.map { log in
                         Backup.ManuscriptSnapshot.LogSnapshot(
-                            id: $0.id,
-                            date: $0.date,
-                            statusRaw: $0.statusRaw,
-                            note: $0.note
+                            id: log.id,
+                            date: log.date,
+                            statusRaw: log.statusRaw,
+                            stageRaw: log.stageRaw,
+                            note: log.note
+                        )
+                    },
+                    attachments: m.sortedAttachments.map { att in
+                        Backup.ManuscriptSnapshot.AttachmentSnapshot(
+                            id: att.id,
+                            statusLogId: att.statusLog?.id,
+                            relativePath: att.relativePath,
+                            originalFileName: att.originalFileName,
+                            displayName: att.displayName,
+                            fileTypeRaw: att.fileTypeRaw,
+                            fileSize: att.fileSize,
+                            sha256Hash: att.sha256Hash,
+                            mimeType: att.mimeType,
+                            addedDate: att.addedDate,
+                            updatedAt: att.updatedAt
                         )
                     }
                 )
@@ -159,46 +198,139 @@ public enum ExportService {
         return try? encoder.encode(snapshot)
     }
 
-    /// 从备份 JSON 恢复（追加写入；id 相同的稿件跳过，避免重复）。
+    /// 从备份 JSON 恢复（支持 v1 与 v2，按 UUID 与 updatedAt 安全 upsert）。
     @discardableResult
     public static func restore(from data: Data, into context: ModelContext) throws -> Int {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let backup = try decoder.decode(Backup.self, from: data)
 
-        // 已存在的稿件 id
-        var existingIDs = Set<UUID>()
         let existing = try context.fetch(FetchDescriptor<Manuscript>())
-        existingIDs = Set(existing.map { $0.id })
+        var existingMap = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
 
-        var restored = 0
-        for snap in backup.manuscripts where !existingIDs.contains(snap.id) {
-            let m = Manuscript(
-                title: snap.title,
-                venue: snap.venue,
-                venueType: VenueType(rawValue: snap.venueTypeRaw) ?? .other,
-                submissionDate: snap.submissionDate,
-                currentStatus: ManuscriptStatus(rawValue: snap.currentStatusRaw) ?? .draft,
-                fileBookmark: Data(),
-                filePath: snap.filePath,
-                notes: snap.notes,
-                collaborators: snap.collaborators,
-                tags: snap.tags,
-                deadlineDate: snap.deadlineDate
-            )
-            m.id = snap.id
-            m.createdAt = snap.createdAt
-            m.updatedAt = snap.updatedAt
-            m.statusLogs = snap.statusLogs.map { logSnap in
-                let e = StatusLogEntry(date: logSnap.date, status: ManuscriptStatus(rawValue: logSnap.statusRaw) ?? .draft, note: logSnap.note)
-                e.id = logSnap.id
-                e.manuscript = m
-                return e
+        var restoredOrUpdated = 0
+        for snap in backup.manuscripts {
+            if let m = existingMap[snap.id] {
+                // 已存在同 UUID 稿件：比较 updatedAt 做安全更新
+                if snap.updatedAt > m.updatedAt {
+                    m.title = snap.title
+                    m.venue = snap.venue
+                    m.venueTypeRaw = snap.venueTypeRaw
+                    m.manuscriptNumber = snap.manuscriptNumber ?? ""
+                    m.submissionSystemURL = snap.submissionSystemURL ?? ""
+                    m.authorGuideURL = snap.authorGuideURL ?? ""
+                    m.submissionDate = snap.submissionDate
+                    m.currentStatusRaw = snap.currentStatusRaw
+                    m.notes = snap.notes
+                    m.collaborators = StringList(snap.collaborators)
+                    m.tags = StringList(snap.tags)
+                    m.deadlineDate = snap.deadlineDate
+                    m.updatedAt = snap.updatedAt
+                }
+
+                // 补全缺失的状态日志
+                var logMap = Dictionary(uniqueKeysWithValues: (m.statusLogs ?? []).map { ($0.id, $0) })
+                for logSnap in snap.statusLogs where logMap[logSnap.id] == nil {
+                    let entry = StatusLogEntry(
+                        date: logSnap.date,
+                        status: ManuscriptStatus(rawValue: logSnap.statusRaw) ?? .draft,
+                        stage: logSnap.stageRaw ?? "",
+                        note: logSnap.note,
+                        id: logSnap.id
+                    )
+                    entry.manuscript = m
+                    if m.statusLogs == nil { m.statusLogs = [] }
+                    m.statusLogs?.append(entry)
+                    logMap[entry.id] = entry
+                }
+
+                // 补全缺失的附件记录
+                var attMap = Dictionary(uniqueKeysWithValues: (m.attachments ?? []).map { ($0.id, $0) })
+                for attSnap in (snap.attachments ?? []) where attMap[attSnap.id] == nil {
+                    let att = Attachment(
+                        relativePath: attSnap.relativePath,
+                        originalFileName: attSnap.originalFileName,
+                        displayName: attSnap.displayName,
+                        fileSize: attSnap.fileSize,
+                        sha256Hash: attSnap.sha256Hash,
+                        mimeType: attSnap.mimeType,
+                        syncState: .synced,
+                        fileType: AttachmentFileType(rawValue: attSnap.fileTypeRaw) ?? .supplementary,
+                        addedDate: attSnap.addedDate,
+                        id: attSnap.id
+                    )
+                    att.manuscript = m
+                    if let sId = attSnap.statusLogId {
+                        att.statusLog = logMap[sId]
+                    }
+                    if m.attachments == nil { m.attachments = [] }
+                    m.attachments?.append(att)
+                    attMap[att.id] = att
+                }
+
+                restoredOrUpdated += 1
+            } else {
+                // 全新稿件
+                let m = Manuscript(
+                    title: snap.title,
+                    venue: snap.venue,
+                    venueType: VenueType(rawValue: snap.venueTypeRaw) ?? .other,
+                    manuscriptNumber: snap.manuscriptNumber ?? "",
+                    submissionSystemURL: snap.submissionSystemURL ?? "",
+                    authorGuideURL: snap.authorGuideURL ?? "",
+                    submissionDate: snap.submissionDate,
+                    currentStatus: ManuscriptStatus(rawValue: snap.currentStatusRaw) ?? .draft,
+                    fileBookmark: Data(),
+                    filePath: snap.filePath,
+                    notes: snap.notes,
+                    collaborators: snap.collaborators,
+                    tags: snap.tags,
+                    deadlineDate: snap.deadlineDate
+                )
+                m.id = snap.id
+                m.createdAt = snap.createdAt
+                m.updatedAt = snap.updatedAt
+
+                var logMap: [UUID: StatusLogEntry] = [:]
+                m.statusLogs = snap.statusLogs.map { logSnap in
+                    let e = StatusLogEntry(
+                        date: logSnap.date,
+                        status: ManuscriptStatus(rawValue: logSnap.statusRaw) ?? .draft,
+                        stage: logSnap.stageRaw ?? "",
+                        note: logSnap.note,
+                        id: logSnap.id
+                    )
+                    e.manuscript = m
+                    logMap[e.id] = e
+                    return e
+                }
+
+                m.attachments = (snap.attachments ?? []).map { attSnap in
+                    let a = Attachment(
+                        relativePath: attSnap.relativePath,
+                        originalFileName: attSnap.originalFileName,
+                        displayName: attSnap.displayName,
+                        fileSize: attSnap.fileSize,
+                        sha256Hash: attSnap.sha256Hash,
+                        mimeType: attSnap.mimeType,
+                        syncState: .synced,
+                        fileType: AttachmentFileType(rawValue: attSnap.fileTypeRaw) ?? .supplementary,
+                        addedDate: attSnap.addedDate,
+                        id: attSnap.id
+                    )
+                    a.manuscript = m
+                    if let sId = attSnap.statusLogId {
+                        a.statusLog = logMap[sId]
+                    }
+                    return a
+                }
+
+                context.insert(m)
+                existingMap[m.id] = m
+                restoredOrUpdated += 1
             }
-            context.insert(m)
-            restored += 1
         }
         try context.save()
-        return restored
+        return restoredOrUpdated
     }
 }

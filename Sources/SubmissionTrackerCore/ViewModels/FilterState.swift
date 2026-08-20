@@ -12,7 +12,16 @@ enum SortMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// 列表/筛选状态（由 UI 持有，供 @Query 动态谓词使用）。
+/// 截止日期筛选
+enum DeadlineFilterOption: String, CaseIterable, Identifiable {
+    case all = "全部"
+    case upcoming7Days = "7天内截止"
+    case overdue = "已逾期"
+
+    var id: String { rawValue }
+}
+
+/// 列表/筛选状态（由 UI 持有，供 @Query 与动态时间流使用）。
 @MainActor
 final class FilterState: ObservableObject {
     @Published var searchText: String = ""
@@ -20,41 +29,32 @@ final class FilterState: ObservableObject {
     @Published var statusFilter: Set<ManuscriptStatus> = []
     /// 已勾选的标签筛选（空 = 不过滤）
     @Published var tagFilter: Set<String> = []
+    /// 指定期刊筛选
+    @Published var selectedVenue: String? = nil
+    /// 是否仅看含附件
+    @Published var onlyWithAttachments: Bool = false
+    /// 截止日期筛选
+    @Published var deadlineFilter: DeadlineFilterOption = .all
     @Published var sortMode: SortMode = .submissionDateDesc
+
+    init() {}
 
     var hasActiveFilter: Bool {
         !searchText.trimmingCharacters(in: .whitespaces).isEmpty
             || !statusFilter.isEmpty
             || !tagFilter.isEmpty
+            || selectedVenue != nil
+            || onlyWithAttachments
+            || deadlineFilter != .all
     }
 
-    /// 用于 @Query 的动态谓词：标题/期刊/标签/备注全文搜索 + 状态 + 标签筛选。
-    var predicate: Predicate<Manuscript>? {
-        let text = searchText.trimmingCharacters(in: .whitespaces)
-        let statuses = statusFilter.map(\.rawValue)
-        let tags = Array(tagFilter)
-
-        if text.isEmpty && statuses.isEmpty && tags.isEmpty { return nil }
-
-        let t = text
-        let s = statuses
-        let g = tags
-        return #Predicate<Manuscript> { m in
-            (t.isEmpty ||
-                m.title.localizedStandardContains(t) ||
-                m.venue.localizedStandardContains(t) ||
-                m.notes.localizedStandardContains(t) ||
-                m.tags.items.contains { $0.localizedStandardContains(t) })
-            && (s.isEmpty || s.contains(m.currentStatusRaw))
-            && (g.isEmpty || g.allSatisfy { tag in m.tags.items.contains(tag) })
-        }
-    }
-
-    /// 所有出现过的标签（用于筛选菜单）
-    static func allTags(from manuscripts: [Manuscript]) -> [String] {
-        var set = Set<String>()
-        for m in manuscripts { set.formUnion(m.tags.items) }
-        return set.sorted()
+    func clearAllFilters() {
+        searchText = ""
+        statusFilter = []
+        tagFilter = []
+        selectedVenue = nil
+        onlyWithAttachments = false
+        deadlineFilter = .all
     }
 
     /// 按 sortMode 对结果排序
@@ -69,5 +69,21 @@ final class FilterState: ObservableObject {
         case .titleAsc:
             return manuscripts.sorted { $0.title.localizedCompare($1.title) == .orderedAscending }
         }
+    }
+
+    /// 所有出现过的标签（用于筛选菜单）
+    static func allTags(from manuscripts: [Manuscript]) -> [String] {
+        var set = Set<String>()
+        for m in manuscripts { set.formUnion(m.tags.items) }
+        return set.sorted()
+    }
+
+    /// 所有出现过的期刊/会议名称
+    static func allVenues(from manuscripts: [Manuscript]) -> [String] {
+        var set = Set<String>()
+        for m in manuscripts where !m.venue.trimmingCharacters(in: .whitespaces).isEmpty {
+            set.insert(m.venue)
+        }
+        return set.sorted()
     }
 }

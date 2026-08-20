@@ -15,6 +15,9 @@ struct ManuscriptFormView: View {
     @State private var title = ""
     @State private var venue = ""
     @State private var venueType: VenueType = .journal
+    @State private var manuscriptNumber = ""
+    @State private var submissionSystemURL = ""
+    @State private var authorGuideURL = ""
     @State private var submissionDate = Date.now
     @State private var status: ManuscriptStatus = .draft
     @State private var hasDeadline = false
@@ -22,7 +25,7 @@ struct ManuscriptFormView: View {
     @State private var collaboratorsText = ""
     @State private var tagsText = ""
     @State private var notes = ""
-    @State private var pickedFile: (bookmark: Data, path: String)?
+    @State private var pickedFile: (bookmark: Data, path: String, url: URL)?
 
     /// 编辑模式下进入时的原状态（用于判断是否需要补一条状态记录）
     @State private var originalStatus: ManuscriptStatus?
@@ -39,19 +42,40 @@ struct ManuscriptFormView: View {
                     TextField("稿件标题", text: $title)
                         .font(AppTheme.serifBody(14))
                 }
-                field("期刊 / 会议") {
-                    HStack {
-                        TextField("目标期刊或会议名称", text: $venue)
-                            .font(AppTheme.serifBody(14))
-                        Picker("", selection: $venueType) {
-                            ForEach(VenueType.allCases) { t in
-                                Text(t.displayNameZh).tag(t)
+
+                HStack(alignment: .top, spacing: 16) {
+                    field("期刊 / 会议") {
+                        HStack {
+                            TextField("目标期刊或会议名称", text: $venue)
+                                .font(AppTheme.serifBody(14))
+                            Picker("", selection: $venueType) {
+                                ForEach(VenueType.allCases) { t in
+                                    Text(t.displayNameZh).tag(t)
+                                }
                             }
+                            .labelsHidden()
+                            .fixedSize()
                         }
-                        .labelsHidden()
-                        .fixedSize()
+                    }
+
+                    field("稿件编号（可选）") {
+                        TextField("例如：JMAA-25-2243", text: $manuscriptNumber)
+                            .font(AppTheme.monoLabel(12))
                     }
                 }
+
+                HStack(alignment: .top, spacing: 16) {
+                    field("投稿系统 URL（可选）") {
+                        TextField("https://www.editorialmanager.com/...", text: $submissionSystemURL)
+                            .font(AppTheme.monoLabel(11))
+                    }
+
+                    field("作者指南 URL（可选）") {
+                        TextField("https://www.sciencedirect.com/journal/...", text: $authorGuideURL)
+                            .font(AppTheme.monoLabel(11))
+                    }
+                }
+
                 HStack(alignment: .top, spacing: 16) {
                     field("投稿日期") {
                         DatePicker("", selection: $submissionDate, displayedComponents: .date)
@@ -125,7 +149,7 @@ struct ManuscriptFormView: View {
     // MARK: - 文件
 
     private var fileRow: some View {
-        field("关联文件") {
+        field("主手稿 / PDF") {
             HStack {
                 if let f = pickedFile {
                     Text(URL(fileURLWithPath: f.path).lastPathComponent)
@@ -141,7 +165,7 @@ struct ManuscriptFormView: View {
                         .font(AppTheme.monoLabel(12))
                         .foregroundStyle(.tertiary)
                 }
-                Button("选择文件…") { pickFile() }
+                Button("选择主稿文件…") { pickFile() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
             }
@@ -162,6 +186,9 @@ struct ManuscriptFormView: View {
         title = m.title
         venue = m.venue
         venueType = m.venueType
+        manuscriptNumber = m.manuscriptNumber
+        submissionSystemURL = m.submissionSystemURL
+        authorGuideURL = m.authorGuideURL
         submissionDate = m.submissionDate
         status = m.currentStatus
         originalStatus = m.currentStatus
@@ -175,7 +202,7 @@ struct ManuscriptFormView: View {
         tagsText = m.tags.items.joined(separator: ", ")
         notes = m.notes
         if !m.fileBookmark.isEmpty {
-            pickedFile = (m.fileBookmark, m.filePath)
+            pickedFile = (m.fileBookmark, m.filePath, URL(fileURLWithPath: m.filePath))
         }
     }
 
@@ -189,6 +216,9 @@ struct ManuscriptFormView: View {
             m.title = title
             m.venue = venue
             m.venueType = venueType
+            m.manuscriptNumber = manuscriptNumber
+            m.submissionSystemURL = submissionSystemURL
+            m.authorGuideURL = authorGuideURL
             m.submissionDate = submissionDate
             m.collaborators = StringList(collaborators)
             m.tags = StringList(tags)
@@ -197,9 +227,26 @@ struct ManuscriptFormView: View {
             if let f = pickedFile {
                 m.fileBookmark = f.bookmark
                 m.filePath = f.path
+                // 若为新选的文件，尝试导入托管副本
+                if let info = try? FileService.importManagedCopy(from: f.url, manuscriptID: m.id, statusLogID: nil, fileType: .manuscript) {
+                    let att = Attachment(
+                        relativePath: info.relativePath,
+                        originalFileName: info.originalFileName,
+                        displayName: "主手稿",
+                        fileSize: info.fileSize,
+                        sha256Hash: info.sha256Hash,
+                        mimeType: info.mimeType,
+                        syncState: .local,
+                        fileType: .manuscript,
+                        addedDate: .now
+                    )
+                    att.manuscript = m
+                    if m.attachments == nil { m.attachments = [] }
+                    m.attachments?.append(att)
+                }
             }
             if let original = originalStatus, original != status {
-                m.appendStatusLog(status, note: "状态更新", context: context)
+                _ = m.appendStatusLog(status, date: .now, stage: "状态更新", note: "", context: context)
             }
             if let deadline {
                 Task { await NotificationService.scheduleDeadlineReminder(
@@ -215,6 +262,9 @@ struct ManuscriptFormView: View {
                 title: title,
                 venue: venue,
                 venueType: venueType,
+                manuscriptNumber: manuscriptNumber,
+                submissionSystemURL: submissionSystemURL,
+                authorGuideURL: authorGuideURL,
                 submissionDate: submissionDate,
                 currentStatus: status,
                 fileBookmark: pickedFile?.bookmark ?? Data(),
@@ -225,17 +275,42 @@ struct ManuscriptFormView: View {
                 deadlineDate: deadline
             )
             context.insert(m)
-            // 初始状态记录
-            let log = StatusLogEntry(date: .now, status: status, note: "创建记录")
+
+            // 初始状态记录：对齐用户选择的 submissionDate
+            let log = StatusLogEntry(date: submissionDate, status: status, stage: "初始投稿", note: "创建记录")
             if m.statusLogs == nil { m.statusLogs = [] }
             m.statusLogs?.append(log)
             log.manuscript = m
+
+            // 导入托管主手稿
+            if let f = pickedFile {
+                if let info = try? FileService.importManagedCopy(from: f.url, manuscriptID: m.id, statusLogID: log.id, fileType: .manuscript) {
+                    let att = Attachment(
+                        relativePath: info.relativePath,
+                        originalFileName: info.originalFileName,
+                        displayName: "主手稿",
+                        fileSize: info.fileSize,
+                        sha256Hash: info.sha256Hash,
+                        mimeType: info.mimeType,
+                        syncState: .local,
+                        fileType: .manuscript,
+                        addedDate: submissionDate
+                    )
+                    att.manuscript = m
+                    att.statusLog = log
+                    m.attachments = [att]
+                    log.attachments = [att]
+                }
+            }
+
             if let deadline {
                 Task { await NotificationService.scheduleDeadlineReminder(
                     id: m.id, title: m.title, venue: m.venue, deadline: deadline) }
             }
             try? context.save()
         }
+
+        WebDAVSyncService.shared.autoSyncIfNeeded(context: context)
         dismiss()
     }
 

@@ -81,9 +81,15 @@ public struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("坚果云 / WebDAV 自动同步")
                             .font(AppTheme.serifTitle(16))
-                        Text("将论文投稿数据安全同步至云端，防丢失且支持跨设备恢复。")
-                            .font(AppTheme.serifBody(12))
-                            .foregroundStyle(.secondary)
+                        if syncService.isSyncing, !syncService.syncProgressMessage.isEmpty {
+                            Text(syncService.syncProgressMessage)
+                                .font(AppTheme.monoLabel(11))
+                                .foregroundStyle(AppTheme.navy)
+                        } else {
+                            Text("将论文投稿数据及 PDF 附件安全同步至云端，防丢失且支持跨设备恢复。")
+                                .font(AppTheme.serifBody(12))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     Spacer()
                     if syncService.isSyncing {

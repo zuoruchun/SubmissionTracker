@@ -44,6 +44,9 @@ public final class WebDAVSyncService: ObservableObject {
         didSet { UserDefaults.standard.set(lastSyncStatus, forKey: kLastSyncStatus) }
     }
     @Published public var isSyncing: Bool = false
+    @Published public var syncProgressMessage: String = ""
+
+    private var autoSyncTask: Task<Void, Never>?
 
     private init() {
         self.serverURL = UserDefaults.standard.string(forKey: kServerURL) ?? "https://dav.jianguoyun.com/dav/"
@@ -64,7 +67,7 @@ public final class WebDAVSyncService: ObservableObject {
         return URL(string: str)
     }
 
-    private var fileURL: URL? {
+    private var manifestURL: URL? {
         guard let base = cleanServerURL else { return nil }
         var dir = remoteDirectory.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
         if dir.isEmpty { dir = "SubmissionTracker" }
@@ -125,28 +128,39 @@ public final class WebDAVSyncService: ObservableObject {
         }
     }
 
-    // MARK: - 确保远程目录存在 (MKCOL)
+    // MARK: - 递归确保远程各级目录存在 (MKCOL)
 
-    private func ensureRemoteDirectory() async throws {
-        guard let dirURL = directoryURL, let auth = basicAuthHeader else { return }
-        var req = URLRequest(url: dirURL)
-        req.httpMethod = "MKCOL"
-        req.setValue(auth, forHTTPHeaderField: "Authorization")
-        req.timeoutInterval = 10
+    public func ensureRemoteDirectoryHierarchy(targetURL: URL) async throws {
+        guard let base = cleanServerURL, let auth = basicAuthHeader else { return }
 
-        let (_, res) = try await URLSession.shared.data(for: req)
-        if let http = res as? HTTPURLResponse {
-            // 201 Created 或者 405 Method Not Allowed (目录已存在)
-            if http.statusCode == 201 || http.statusCode == 405 || http.statusCode == 200 {
-                return
+        let basePath = base.path
+        let targetPath = targetURL.deletingLastPathComponent().path
+
+        guard targetPath.hasPrefix(basePath) else { return }
+        let relative = String(targetPath.dropFirst(basePath.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let segments = relative.split(separator: "/").map(String.init)
+
+        var current = base
+        for segment in segments {
+            current = current.appendingPathComponent(segment, isDirectory: true)
+            var req = URLRequest(url: current)
+            req.httpMethod = "MKCOL"
+            req.setValue(auth, forHTTPHeaderField: "Authorization")
+            req.timeoutInterval = 10
+            let (_, res) = try await URLSession.shared.data(for: req)
+            if let http = res as? HTTPURLResponse {
+                // 201 Created, 405 Method Not Allowed (已存在), 200 OK
+                if http.statusCode != 201 && http.statusCode != 405 && http.statusCode != 200 && http.statusCode != 301 {
+                    // 目录已存在或忽略
+                }
             }
         }
     }
 
-    // MARK: - 上传备份至云端 (PUT)
+    // MARK: - 上传备份与附件至云端 (PUT)
 
     public func uploadBackup(from context: ModelContext) async -> Result<Date, Error> {
-        guard let targetURL = fileURL else {
+        guard let targetManifestURL = manifestURL else {
             return .failure(WebDAVError.invalidURL)
         }
         guard let auth = basicAuthHeader else {
@@ -154,21 +168,58 @@ public final class WebDAVSyncService: ObservableObject {
         }
 
         self.isSyncing = true
-        defer { self.isSyncing = false }
+        defer {
+            self.isSyncing = false
+            self.syncProgressMessage = ""
+        }
 
         do {
-            // 1. 获取所有稿件数据并序列化为 JSON
             let descriptor = FetchDescriptor<Manuscript>()
             let manuscripts = try context.fetch(descriptor)
+
+            // 1. 先同步所有新增/变动的附件本体
+            var allAttachments: [Attachment] = []
+            for m in manuscripts {
+                allAttachments.append(contentsOf: m.attachments ?? [])
+            }
+
+            var uploadedCount = 0
+            for (idx, att) in allAttachments.enumerated() {
+                guard !att.relativePath.isEmpty else { continue }
+                let localURL = FileService.managedFileURL(for: att.relativePath)
+                guard FileManager.default.fileExists(atPath: localURL.path) else { continue }
+
+                // 远端 URL: base / remoteDir / relativePath
+                guard let base = directoryURL else { continue }
+                let remoteAttURL = base.appendingPathComponent(att.relativePath)
+
+                self.syncProgressMessage = "正在上传附件 (\(idx + 1)/\(allAttachments.count)): \(att.displayName)"
+
+                try await ensureRemoteDirectoryHierarchy(targetURL: remoteAttURL)
+
+                var req = URLRequest(url: remoteAttURL)
+                req.httpMethod = "PUT"
+                req.setValue(auth, forHTTPHeaderField: "Authorization")
+                req.setValue(att.mimeType, forHTTPHeaderField: "Content-Type")
+                req.timeoutInterval = 60
+
+                let (_, uploadRes) = try await URLSession.shared.upload(for: req, fromFile: localURL)
+                if let http = uploadRes as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                    att.lastSyncedHash = att.sha256Hash
+                    att.syncState = .synced
+                    uploadedCount += 1
+                }
+            }
+
+            // 2. 所有附件上传完成后，最后生成并上传 v2 清单
+            self.syncProgressMessage = "正在上传数据清单..."
             guard let jsonData = ExportService.backup(for: manuscripts) else {
                 return .failure(WebDAVError.serializationFailed)
             }
 
-            // 2. 确保远程目录存在
-            try? await ensureRemoteDirectory()
+            try await ensureRemoteDirectoryHierarchy(targetURL: targetManifestURL)
 
-            // 3. 上传文件
-            var req = URLRequest(url: targetURL)
+            var req = URLRequest(url: targetManifestURL)
             req.httpMethod = "PUT"
             req.setValue(auth, forHTTPHeaderField: "Authorization")
             req.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
@@ -180,13 +231,14 @@ public final class WebDAVSyncService: ObservableObject {
                 if (200...299).contains(http.statusCode) {
                     let now = Date()
                     self.lastSyncDate = now
-                    self.lastSyncStatus = "已备份 (\(manuscripts.count) 篇稿件)"
+                    self.lastSyncStatus = "已备份 (\(manuscripts.count) 篇稿件，\(allAttachments.count) 个附件)"
+                    try? context.save()
                     return .success(now)
                 } else if http.statusCode == 401 {
                     self.lastSyncStatus = "认证失败 (401)"
                     return .failure(WebDAVError.unauthorized)
                 } else {
-                    let msg = "上传失败状态码: \(http.statusCode)"
+                    let msg = "清单上传失败: \(http.statusCode)"
                     self.lastSyncStatus = msg
                     return .failure(WebDAVError.serverError(msg))
                 }
@@ -201,7 +253,7 @@ public final class WebDAVSyncService: ObservableObject {
     // MARK: - 从云端拉取并恢复 (GET)
 
     public func downloadAndRestore(into context: ModelContext) async -> Result<Int, Error> {
-        guard let targetURL = fileURL else {
+        guard let targetManifestURL = manifestURL, let baseDir = directoryURL else {
             return .failure(WebDAVError.invalidURL)
         }
         guard let auth = basicAuthHeader else {
@@ -209,10 +261,14 @@ public final class WebDAVSyncService: ObservableObject {
         }
 
         self.isSyncing = true
-        defer { self.isSyncing = false }
+        defer {
+            self.isSyncing = false
+            self.syncProgressMessage = ""
+        }
 
         do {
-            var req = URLRequest(url: targetURL)
+            self.syncProgressMessage = "正在下载数据清单..."
+            var req = URLRequest(url: targetManifestURL)
             req.httpMethod = "GET"
             req.setValue(auth, forHTTPHeaderField: "Authorization")
             req.timeoutInterval = 30
@@ -220,23 +276,73 @@ public final class WebDAVSyncService: ObservableObject {
             let (data, response) = try await URLSession.shared.data(for: req)
             if let http = response as? HTTPURLResponse {
                 if http.statusCode == 404 {
-                    self.lastSyncStatus = "云端未找到备份文件"
+                    self.lastSyncStatus = "云端未找到备份清单"
                     return .failure(WebDAVError.fileNotFound)
                 } else if http.statusCode == 401 {
                     self.lastSyncStatus = "认证失败 (401)"
                     return .failure(WebDAVError.unauthorized)
                 } else if !(200...299).contains(http.statusCode) {
-                    let msg = "下载失败状态码: \(http.statusCode)"
+                    let msg = "下载清单失败: \(http.statusCode)"
                     self.lastSyncStatus = msg
                     return .failure(WebDAVError.serverError(msg))
                 }
             }
 
-            // 恢复入数据库
+            // 解析清单并在本地下载附件
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let backup = try decoder.decode(ExportService.Backup.self, from: data)
+
+            var downloadedFiles = 0
+            for snap in backup.manuscripts {
+                for attSnap in (snap.attachments ?? []) {
+                    guard !attSnap.relativePath.isEmpty else { continue }
+                    let localTarget = FileService.managedFileURL(for: attSnap.relativePath)
+
+                    // 如果本地不存在或哈希不一致，从云端拉取
+                    let needDownload: Bool
+                    if FileManager.default.fileExists(atPath: localTarget.path) {
+                        let localHash = FileService.computeSHA256(for: localTarget)?.sha256 ?? ""
+                        needDownload = (localHash != attSnap.sha256Hash)
+                    } else {
+                        needDownload = true
+                    }
+
+                    if needDownload {
+                        self.syncProgressMessage = "正在拉取附件: \(attSnap.displayName)"
+                        let remoteURL = baseDir.appendingPathComponent(attSnap.relativePath)
+                        var getReq = URLRequest(url: remoteURL)
+                        getReq.httpMethod = "GET"
+                        getReq.setValue(auth, forHTTPHeaderField: "Authorization")
+                        getReq.timeoutInterval = 60
+
+                        let (fileData, fileRes) = try await URLSession.shared.data(for: getReq)
+                        if let fileHttp = fileRes as? HTTPURLResponse, (200...299).contains(fileHttp.statusCode) {
+                            let parent = localTarget.deletingLastPathComponent()
+                            try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+                            let tmpURL = parent.appendingPathComponent(".tmp_dl_\(UUID().uuidString)")
+                            try fileData.write(to: tmpURL)
+
+                            if let hash = FileService.computeSHA256(for: tmpURL), hash.sha256 == attSnap.sha256Hash || attSnap.sha256Hash.isEmpty {
+                                if FileManager.default.fileExists(atPath: localTarget.path) {
+                                    _ = try FileManager.default.replaceItemAt(localTarget, withItemAt: tmpURL)
+                                } else {
+                                    try FileManager.default.moveItem(at: tmpURL, to: localTarget)
+                                }
+                                downloadedFiles += 1
+                            } else {
+                                try? FileManager.default.removeItem(at: tmpURL)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 恢复数据库记录
             let count = try ExportService.restore(from: data, into: context)
             let now = Date()
             self.lastSyncDate = now
-            self.lastSyncStatus = "恢复成功 (\(count) 篇稿件)"
+            self.lastSyncStatus = "恢复成功 (\(count) 篇稿件，下载 \(downloadedFiles) 个文件)"
             return .success(count)
         } catch {
             self.lastSyncStatus = "恢复失败: \(error.localizedDescription)"
@@ -244,12 +350,16 @@ public final class WebDAVSyncService: ObservableObject {
         }
     }
 
-    // MARK: - 触发自动同步（若已开启）
+    // MARK: - 5秒防抖自动同步 (Debounced Auto-Sync)
 
     public func autoSyncIfNeeded(context: ModelContext) {
         guard autoSyncEnabled, !username.isEmpty, !password.isEmpty else { return }
-        Task {
-            _ = await uploadBackup(from: context)
+        autoSyncTask?.cancel()
+        autoSyncTask = Task {
+            try? await Task.sleep(nanoseconds: 5 * 1_000_000_000)
+            if !Task.isCancelled {
+                _ = await uploadBackup(from: context)
+            }
         }
     }
 }
