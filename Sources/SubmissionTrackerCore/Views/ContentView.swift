@@ -68,11 +68,7 @@ public struct ContentView: View {
 
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    #if os(macOS)
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                    #else
                     showingSettings = true
-                    #endif
                 } label: {
                     Image(systemName: "gearshape")
                 }

@@ -18,21 +18,39 @@ public struct SettingsView: View {
     public init() {}
 
     public var body: some View {
-        TabView(selection: $selectedTab) {
-            cloudSyncTab
-                .tabItem {
-                    Label("云端同步", systemImage: "icloud.and.arrow.up")
+        VStack(spacing: 0) {
+            HStack {
+                Text("偏好设置")
+                    .font(AppTheme.serifTitle(16))
+                Spacer()
+                Button("完成") {
+                    dismiss()
                 }
-                .tag(0)
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 8)
 
-            aboutTab
-                .tabItem {
-                    Label("关于与备份", systemImage: "info.circle")
-                }
-                .tag(1)
+            TabView(selection: $selectedTab) {
+                cloudSyncTab
+                    .tabItem {
+                        Label("云端同步", systemImage: "icloud.and.arrow.up")
+                    }
+                    .tag(0)
+
+                aboutTab
+                    .tabItem {
+                        Label("关于与备份", systemImage: "info.circle")
+                    }
+                    .tag(1)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
-        .frame(width: 540, height: 480)
-        .padding(20)
+        .frame(width: 560, height: 500)
         .alert("连接测试", isPresented: $showingTestAlert) {
             Button("好", role: .cancel) {}
         } message: {

@@ -23,7 +23,7 @@ enum FileService {
     @discardableResult
     @MainActor
     static func chooseFile(
-        allowedContentTypes: [UTType] = [.pdf, .plainText, .rtf, .text, .json],
+        allowedContentTypes: [UTType] = [.item, .content, .data, .pdf, .plainText, .rtf, .text, .json],
         allowsMultipleSelection: Bool = false
     ) async -> [(bookmark: Data, path: String)]? {
         #if os(macOS)

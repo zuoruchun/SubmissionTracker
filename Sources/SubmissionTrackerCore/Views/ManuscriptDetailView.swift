@@ -20,8 +20,7 @@ struct ManuscriptDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
-                fileSection
-                attachmentsSection
+                filesAndAttachmentsSection
                 timelineSection
                 notesSection
             }
@@ -116,41 +115,177 @@ struct ManuscriptDetailView: View {
         }
     }
 
-    // MARK: - 文件关联
+    // MARK: - 论文文件与附件（统一管理）
 
-    private var fileSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("关联文件")
-            if !manuscript.filePath.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "doc")
+    private var filesAndAttachmentsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                sectionTitle("论文文件与附件")
+                Spacer()
+                Button {
+                    addAttachment()
+                } label: {
+                    Label("添加附件 / 补充材料", systemImage: "plus.circle")
+                }
+                .font(AppTheme.monoLabel(11))
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            let attachments = manuscript.sortedAttachments
+            let hasMainFile = !manuscript.filePath.isEmpty
+            let hasAttachments = !attachments.isEmpty
+
+            if !hasMainFile && !hasAttachments {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("暂未关联任何文件（支持关联论文 TeX/PDF 主手稿、审稿意见、回复信或补充材料）")
+                        .font(AppTheme.serifBody(12))
                         .foregroundStyle(.secondary)
-                    Text(displayFileName)
-                        .font(AppTheme.monoLabel(12))
-                        .lineLimit(1)
-                    Spacer()
-                    if hasResolvableFile {
-                        Button("在 Finder 中显示") {
-                            FileService.reveal(bookmark: manuscript.fileBookmark,
-                                               fallbackPath: manuscript.filePath)
+                    HStack(spacing: 10) {
+                        Button {
+                            chooseMainFile()
+                        } label: {
+                            Label("关联主手稿 / PDF…", systemImage: "doc.badge.plus")
+                        }
+                        .font(AppTheme.monoLabel(11))
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+
+                        Button {
+                            addAttachment()
+                        } label: {
+                            Label("添加附件…", systemImage: "paperclip")
                         }
                         .font(AppTheme.monoLabel(11))
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                     }
+                    .padding(.top, 2)
                 }
-                // QuickLook 内嵌预览（.quickLookPreview，macOS 11+ / iOS 14+）
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.03))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                VStack(spacing: 8) {
+                    // 主手稿文件条目
+                    if hasMainFile {
+                        HStack(spacing: 8) {
+                            Text("主手稿")
+                                .font(AppTheme.monoLabel(11))
+                                .padding(.horizontal, 7).padding(.vertical, 2)
+                                .background(AppTheme.navy.opacity(0.12))
+                                .foregroundStyle(AppTheme.navy)
+                                .clipShape(Capsule())
+
+                            Image(systemName: "doc.text.fill")
+                                .foregroundStyle(AppTheme.navy)
+
+                            Text(displayFileName)
+                                .font(AppTheme.monoLabel(12))
+                                .lineLimit(1)
+
+                            Spacer()
+
+                            if hasResolvableFile {
+                                Button("在 Finder 中显示") {
+                                    FileService.reveal(bookmark: manuscript.fileBookmark,
+                                                       fallbackPath: manuscript.filePath)
+                                }
+                                .font(AppTheme.monoLabel(10))
+                                .buttonStyle(.bordered)
+                                .controlSize(.mini)
+                            }
+
+                            Button {
+                                chooseMainFile()
+                            } label: {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("更换主手稿文件")
+
+                            Button {
+                                removeMainFile()
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("移除关联")
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10)
+                        .background(Color.primary.opacity(0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    } else {
+                        HStack {
+                            Text("未关联主手稿 / PDF")
+                                .font(AppTheme.monoLabel(11))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("关联主手稿…") {
+                                chooseMainFile()
+                            }
+                            .font(AppTheme.monoLabel(10))
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 10)
+                    }
+
+                    // 附件列表
+                    ForEach(attachments) { att in
+                        HStack(spacing: 8) {
+                            Text(att.fileType.displayNameZh)
+                                .font(AppTheme.monoLabel(11))
+                                .padding(.horizontal, 7).padding(.vertical, 2)
+                                .background(Color.primary.opacity(0.08))
+                                .clipShape(Capsule())
+
+                            Image(systemName: "paperclip")
+                                .foregroundStyle(.secondary)
+
+                            Text(URL(fileURLWithPath: att.filePath).lastPathComponent)
+                                .font(AppTheme.monoLabel(12))
+                                .lineLimit(1)
+
+                            Spacer()
+
+                            Text(att.addedDate, format: .dateTime.year().month().day())
+                                .font(AppTheme.monoLabel(10))
+                                .foregroundStyle(.tertiary)
+
+                            Button("在 Finder 中显示") {
+                                FileService.reveal(bookmark: att.fileBookmark,
+                                                   fallbackPath: att.filePath)
+                            }
+                            .font(AppTheme.monoLabel(10))
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+
+                            Button {
+                                removeAttachment(att)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10)
+                        .background(Color.primary.opacity(0.02))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+
+                // QuickLook 预览（若主稿件存在）
                 if let url = resolvedFileURL {
                     filePreview(for: url)
-                } else {
-                    Text("该文件在当前设备上不可用（可能仅存在于另一台设备的 iCloud Drive）。")
-                        .font(AppTheme.serifBody(11))
-                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
                 }
-            } else {
-                Text("未关联文件")
-                    .font(AppTheme.serifBody(12))
-                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -170,52 +305,6 @@ struct ManuscriptDetailView: View {
     @ViewBuilder
     private func filePreview(for url: URL) -> some View {
         QuickLookPreviewPane(url: url)
-    }
-
-    // MARK: - 附件
-
-    private var attachmentsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                sectionTitle("附件")
-                Spacer()
-                Button("添加附件") { addAttachment() }
-                    .font(AppTheme.monoLabel(11))
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-            }
-            let items = manuscript.sortedAttachments
-            if items.isEmpty {
-                Text("暂无附件（手稿 / 审稿意见 / 回复信 / 补充材料）")
-                    .font(AppTheme.serifBody(12))
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(items) { att in
-                    HStack(spacing: 8) {
-                        Text(att.fileType.displayNameZh)
-                            .font(AppTheme.monoLabel(11))
-                            .padding(.horizontal, 7).padding(.vertical, 2)
-                            .background(Color.primary.opacity(0.08))
-                            .clipShape(Capsule())
-                        Text(URL(fileURLWithPath: att.filePath).lastPathComponent)
-                            .font(AppTheme.monoLabel(12))
-                            .lineLimit(1)
-                        Spacer()
-                        Text(att.addedDate, format: .dateTime.year().month().day())
-                            .font(AppTheme.monoLabel(10))
-                            .foregroundStyle(.tertiary)
-                        Button {
-                            removeAttachment(att)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.tertiary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-        }
     }
 
     // MARK: - 状态时间线
@@ -291,9 +380,27 @@ struct ManuscriptDetailView: View {
 
     // MARK: - 操作
 
+    private func chooseMainFile() {
+        Task {
+            guard let picked = await FileService.chooseFile(allowsMultipleSelection: false) else { return }
+            guard let first = picked.first else { return }
+            manuscript.fileBookmark = first.bookmark
+            manuscript.filePath = first.path
+            manuscript.touch()
+            try? context.save()
+        }
+    }
+
+    private func removeMainFile() {
+        manuscript.fileBookmark = Data()
+        manuscript.filePath = ""
+        manuscript.touch()
+        try? context.save()
+    }
+
     private func addAttachment() {
         Task {
-            guard let picked = await FileService.chooseFile() else { return }
+            guard let picked = await FileService.chooseFile(allowsMultipleSelection: false) else { return }
             guard let first = picked.first else { return }
             pendingAttachment = first
             showingAttachmentTypePicker = true
