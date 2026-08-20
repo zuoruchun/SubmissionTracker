@@ -4,7 +4,7 @@ import SwiftData
 import AppKit
 #endif
 
-/// 新增/编辑稿件表单（标题、期刊、日期、状态、文件、合作者、标签、备注）。
+/// 新增/编辑稿件表单（标题、期刊、日期、状态、合作者、标签、备注）。
 struct ManuscriptFormView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -25,7 +25,6 @@ struct ManuscriptFormView: View {
     @State private var collaboratorsText = ""
     @State private var tagsText = ""
     @State private var notes = ""
-    @State private var pickedFile: (bookmark: Data, path: String, url: URL)?
 
     /// 编辑模式下进入时的原状态（用于判断是否需要补一条状态记录）
     @State private var originalStatus: ManuscriptStatus?
@@ -106,7 +105,6 @@ struct ManuscriptFormView: View {
                     TextField("例如：SDE, 数值分析", text: $tagsText)
                         .font(AppTheme.monoLabel(12))
                 }
-                fileRow
                 field("备注（Markdown）") {
                     TextEditor(text: $notes)
                         .font(AppTheme.serifBody(13))
@@ -146,39 +144,6 @@ struct ManuscriptFormView: View {
         }
     }
 
-    // MARK: - 文件
-
-    private var fileRow: some View {
-        field("主手稿 / PDF") {
-            HStack {
-                if let f = pickedFile {
-                    Text(URL(fileURLWithPath: f.path).lastPathComponent)
-                        .font(AppTheme.monoLabel(12))
-                        .lineLimit(1)
-                } else if let m = manuscript, !m.filePath.isEmpty {
-                    Text(URL(fileURLWithPath: m.filePath).lastPathComponent)
-                        .font(AppTheme.monoLabel(12))
-                        .lineLimit(1)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("未选择")
-                        .font(AppTheme.monoLabel(12))
-                        .foregroundStyle(.tertiary)
-                }
-                Button("选择主稿文件…") { pickFile() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-            }
-        }
-    }
-
-    private func pickFile() {
-        Task {
-            guard let picked = await FileService.chooseFile() else { return }
-            if let first = picked.first { pickedFile = first }
-        }
-    }
-
     // MARK: - 载入 / 保存
 
     private func loadIfNeeded() {
@@ -201,9 +166,6 @@ struct ManuscriptFormView: View {
         collaboratorsText = m.collaborators.items.joined(separator: ", ")
         tagsText = m.tags.items.joined(separator: ", ")
         notes = m.notes
-        if !m.fileBookmark.isEmpty {
-            pickedFile = (m.fileBookmark, m.filePath, URL(fileURLWithPath: m.filePath))
-        }
     }
 
     private func save() {
@@ -224,29 +186,8 @@ struct ManuscriptFormView: View {
             m.tags = StringList(tags)
             m.deadlineDate = deadline
             m.notes = notes
-            if let f = pickedFile {
-                m.fileBookmark = f.bookmark
-                m.filePath = f.path
-                // 若为新选的文件，尝试导入托管副本
-                if let info = try? FileService.importManagedCopy(from: f.url, manuscriptID: m.id, statusLogID: nil, fileType: .manuscript) {
-                    let att = Attachment(
-                        relativePath: info.relativePath,
-                        originalFileName: info.originalFileName,
-                        displayName: "主手稿",
-                        fileSize: info.fileSize,
-                        sha256Hash: info.sha256Hash,
-                        mimeType: info.mimeType,
-                        syncState: .local,
-                        fileType: .manuscript,
-                        addedDate: .now
-                    )
-                    att.manuscript = m
-                    if m.attachments == nil { m.attachments = [] }
-                    m.attachments?.append(att)
-                }
-            }
             if let original = originalStatus, original != status {
-                _ = m.appendStatusLog(status, date: .now, stage: "状态更新", note: "", context: context)
+                _ = m.appendStatusLog(status, date: .now, stage: stage(for: status), note: "", context: context)
             }
             if let deadline {
                 Task { await NotificationService.scheduleDeadlineReminder(
@@ -267,8 +208,6 @@ struct ManuscriptFormView: View {
                 authorGuideURL: authorGuideURL,
                 submissionDate: submissionDate,
                 currentStatus: status,
-                fileBookmark: pickedFile?.bookmark ?? Data(),
-                filePath: pickedFile?.path ?? "",
                 notes: notes,
                 collaborators: collaborators,
                 tags: tags,
@@ -277,31 +216,10 @@ struct ManuscriptFormView: View {
             context.insert(m)
 
             // 初始状态记录：对齐用户选择的 submissionDate
-            let log = StatusLogEntry(date: submissionDate, status: status, stage: "初始投稿", note: "创建记录")
+            let log = StatusLogEntry(date: submissionDate, status: status, stage: stage(for: status), note: "创建记录")
             if m.statusLogs == nil { m.statusLogs = [] }
             m.statusLogs?.append(log)
             log.manuscript = m
-
-            // 导入托管主手稿
-            if let f = pickedFile {
-                if let info = try? FileService.importManagedCopy(from: f.url, manuscriptID: m.id, statusLogID: log.id, fileType: .manuscript) {
-                    let att = Attachment(
-                        relativePath: info.relativePath,
-                        originalFileName: info.originalFileName,
-                        displayName: "主手稿",
-                        fileSize: info.fileSize,
-                        sha256Hash: info.sha256Hash,
-                        mimeType: info.mimeType,
-                        syncState: .local,
-                        fileType: .manuscript,
-                        addedDate: submissionDate
-                    )
-                    att.manuscript = m
-                    att.statusLog = log
-                    m.attachments = [att]
-                    log.attachments = [att]
-                }
-            }
 
             if let deadline {
                 Task { await NotificationService.scheduleDeadlineReminder(
@@ -320,6 +238,17 @@ struct ManuscriptFormView: View {
         text.split(whereSeparator: { $0 == "," || $0 == "，" })
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+    }
+
+    private func stage(for status: ManuscriptStatus) -> String {
+        switch status {
+        case .submitted:
+            return RevisionStage.r0.rawValue
+        case .revisionSubmitted, .majorRevision, .minorRevision:
+            return RevisionStage.r1.rawValue
+        case .draft, .editorialReview, .underReview, .accept, .published, .reject, .withdrawn:
+            return ""
+        }
     }
 
 }

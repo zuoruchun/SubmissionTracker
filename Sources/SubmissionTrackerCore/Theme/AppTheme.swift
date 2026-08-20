@@ -17,7 +17,7 @@ enum AppTheme {
 
     // MARK: - 强调色（按状态）
 
-    /// 藏青：投稿中 / 外审，主强调色
+    /// 藏青：投稿、编辑部处理、外审和修回稿提交，主强调色
     static let navy = Color(red: 0.16, green: 0.24, blue: 0.38)
     static let accent = navy
     /// 赭石：修订中
@@ -32,9 +32,9 @@ enum AppTheme {
     static func statusColor(_ status: ManuscriptStatus) -> Color {
         switch status {
         case .draft: return taupe
-        case .submitted, .underReview: return navy
+        case .submitted, .editorialReview, .underReview, .revisionSubmitted: return navy
         case .majorRevision, .minorRevision: return ochre
-        case .accept: return moss
+        case .accept, .published: return moss
         case .reject, .withdrawn: return brick
         }
     }
@@ -43,10 +43,13 @@ enum AppTheme {
         switch status {
         case .draft: return "pencil.line"
         case .submitted: return "paperplane"
+        case .editorialReview: return "person.crop.circle.badge.clock"
         case .underReview: return "hourglass"
         case .majorRevision: return "pencil.and.outline"
         case .minorRevision: return "pencil"
+        case .revisionSubmitted: return "paperplane.circle"
         case .accept: return "checkmark.seal"
+        case .published: return "books.vertical"
         case .reject: return "xmark.seal"
         case .withdrawn: return "archivebox"
         }

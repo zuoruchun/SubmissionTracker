@@ -16,10 +16,8 @@ struct ManuscriptDetailView: View {
     @State private var showingEditForm = false
     @State private var showingAddStatus = false
 
-    // 附件选择与目标节点绑定
-    @State private var targetStatusLog: StatusLogEntry? = nil
-    @State private var pendingFile: (bookmark: Data, path: String, url: URL)?
-    @State private var showingAttachmentTypePicker = false
+    // 唯一论文 PDF 上传入口：先选择合规的时间线节点，再选择 PDF。
+    @State private var showingPDFTargetPicker = false
 
     // PDF / 附件预览
     @State private var previewPayload: FilePreviewPayload?
@@ -91,12 +89,10 @@ struct ManuscriptDetailView: View {
         .sheet(isPresented: $showingAddStatus) {
             AddStatusView(manuscript: manuscript)
         }
-        .sheet(isPresented: $showingAttachmentTypePicker) {
-            AttachmentTypePrompt { type in
-                if let file = pendingFile {
-                    processAttachmentImport(file: file, type: type, log: targetStatusLog)
-                }
-                showingAttachmentTypePicker = false
+        .sheet(isPresented: $showingPDFTargetPicker) {
+            PDFTimelineTargetPicker(logs: eligiblePDFLogs) { log in
+                showingPDFTargetPicker = false
+                startPDFImport(for: log)
             }
         }
         .sheet(item: $previewPayload) { payload in
@@ -236,12 +232,23 @@ struct ManuscriptDetailView: View {
                 .font(AppTheme.monoLabel(11))
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+
+                Button {
+                    showingPDFTargetPicker = true
+                } label: {
+                    Label("上传论文 PDF", systemImage: "doc.badge.plus")
+                }
+                .font(AppTheme.monoLabel(11))
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(eligiblePDFLogs.isEmpty)
+                .help(eligiblePDFLogs.isEmpty ? "请先记录首次投稿、修回稿已提交、已接收或已出版状态" : "选择时间线节点并上传论文 PDF")
             }
 
             let logs = manuscript.sortedStatusLogs
             if logs.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("尚无状态记录（点右上角“追加状态记录”记录初投、大修、小修或接收）")
+                    Text("尚无状态记录（请先记录首次投稿、审稿决定或修回状态）")
                         .font(AppTheme.serifBody(12))
                         .foregroundStyle(.secondary)
                 }
@@ -332,17 +339,6 @@ struct ManuscriptDetailView: View {
                                         }
                                     }
 
-                                    Spacer()
-
-                                    // 节点右侧的轻量添加/追加文件按钮
-                                    Button {
-                                        startAddAttachment(targetLog: log)
-                                    } label: {
-                                        Label(logAtts.isEmpty ? "添加论文/附件" : "更换/追加", systemImage: logAtts.isEmpty ? "plus.circle" : "arrow.triangle.2.circlepath")
-                                            .font(AppTheme.monoLabel(10))
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.mini)
                                 }
 
                                 if !log.note.isEmpty {
@@ -376,30 +372,17 @@ struct ManuscriptDetailView: View {
             .font(AppTheme.serifTitle(17))
     }
 
-    // MARK: - 操作与附件处理 (目标 A & C)
+    // MARK: - 唯一论文 PDF 上传与附件处理
 
-    private func startAddAttachment(targetLog: StatusLogEntry?) {
-        self.targetStatusLog = targetLog
+    private var eligiblePDFLogs: [StatusLogEntry] {
+        manuscript.sortedStatusLogs.filter { $0.status.allowsManuscriptPDF }
+    }
+
+    private func startPDFImport(for log: StatusLogEntry) {
         Task {
-            guard let picked = await FileService.chooseFile(allowsMultipleSelection: false) else { return }
+            guard let picked = await FileService.chooseFile(allowedContentTypes: [.pdf], allowsMultipleSelection: false) else { return }
             guard let first = picked.first else { return }
-            self.pendingFile = first
-
-            // 智能根据状态节点与文件名自动推断类型
-            if let log = targetLog {
-                let inferredType: AttachmentFileType
-                let lower = first.url.lastPathComponent.lowercased()
-                if lower.contains("review") || lower.contains("decision") || lower.contains("comment") || lower.contains("意见") {
-                    inferredType = .reviewComments
-                } else if lower.contains("response") || lower.contains("reply") || lower.contains("回复") {
-                    inferredType = .responseLetter
-                } else {
-                    inferredType = .manuscript
-                }
-                processAttachmentImport(file: first, type: inferredType, log: log)
-            } else {
-                self.showingAttachmentTypePicker = true
-            }
+            processAttachmentImport(file: first, type: .manuscript, log: log)
         }
     }
 
@@ -480,8 +463,6 @@ struct ManuscriptDetailView: View {
             print("Import attachment failed: \(error)")
         }
 
-        pendingFile = nil
-        targetStatusLog = nil
     }
 
     private func removeAttachment(_ att: Attachment) {
@@ -507,7 +488,7 @@ struct ManuscriptDetailView: View {
                 subtitle: "\(att.fileType.displayNameZh) · \(dispName)"
             )
         } else {
-            fileAlertMessage = "未在本地找到附件实体文件。如果该文件曾关联在外部磁盘，请在节点右侧点击“绑定附件”重新导入。"
+            fileAlertMessage = "未在本地找到附件实体文件。请通过状态时间线标题旁的“上传论文 PDF”重新导入。"
             showingFileAlert = true
         }
     }
@@ -555,26 +536,65 @@ struct ManuscriptDetailView: View {
     #endif
 }
 
-// MARK: - 附件类型选择小面板
+// MARK: - PDF 目标时间线节点选择
 
-/// 附件类型确认（用简单 Alert 风格 sheet 即可，MVP 默认"补充材料"）
-struct AttachmentTypePrompt: View {
-    let onPick: (AttachmentFileType) -> Void
+/// 只展示论文版本会变化的节点，避免在审稿意见或外审状态误传 PDF。
+private struct PDFTimelineTargetPicker: View {
+    let logs: [StatusLogEntry]
+    let onPick: (StatusLogEntry) -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text("选择附件类型")
-                .font(AppTheme.serifTitle(18))
-            ForEach(AttachmentFileType.allCases) { type in
-                Button(type.displayNameZh) {
-                    onPick(type)
-                    dismiss()
+        VStack(alignment: .leading, spacing: 16) {
+            Text("选择论文版本节点")
+                .font(AppTheme.serifTitle(20))
+            Text("仅首次投稿、修回稿已提交、已接收和已出版节点可上传论文 PDF。")
+                .font(AppTheme.serifBody(12))
+                .foregroundStyle(.secondary)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(logs) { log in
+                        Button {
+                            onPick(log)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 10) {
+                                AppTheme.statusBadge(log.status)
+
+                                if !log.stage.isEmpty {
+                                    Text(log.stage)
+                                        .font(AppTheme.monoLabel(11))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Text(log.date, format: .dateTime.year().month().day())
+                                    .font(AppTheme.monoLabel(11))
+                                    .foregroundStyle(.tertiary)
+
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.primary.opacity(0.04))
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .buttonStyle(.bordered)
+            }
+
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }
+                    .buttonStyle(.bordered)
             }
         }
-        .padding(28)
+        .padding(24)
+        .frame(width: 480, height: 360)
         .presentationDetents([.medium])
     }
 }
