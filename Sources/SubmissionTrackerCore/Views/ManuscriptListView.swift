@@ -141,7 +141,12 @@ struct ManuscriptListView: View {
         }
         .searchable(text: $filter.searchText, placement: .toolbar, prompt: "搜索标题 / 期刊 / 标签 / 备注")
         .toolbar {
-            ToolbarItem {
+            ToolbarItem(placement: .navigation) {
+                Text("共 \(allManuscripts.count) 篇")
+                    .font(AppTheme.monoLabel(12))
+                    .foregroundStyle(.secondary)
+            }
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     showingNewForm = true
                 } label: {
