@@ -29,21 +29,22 @@ public struct ContentView: View {
     }
 
     public var body: some View {
-        NavigationSplitView {
+        Group {
             if viewMode == .timeline {
-                GlobalTimelineView(selection: $selection, showingNewForm: $showingNewForm)
-                    .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 500)
+                GlobalTimelineView()
             } else {
-                ManuscriptListView(selection: $selection, showingNewForm: $showingNewForm)
-                    .navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 450)
-            }
-        } detail: {
-            if let selection {
-                ManuscriptDetailView(manuscript: selection)
-            } else {
-                ContentUnavailableView("选择一篇稿件", systemImage: "sidebar.right",
-                    description: Text(viewMode == .timeline ? "在左侧动态流中选择事件查看稿件详情" : "在左侧稿件列表中选择一篇稿件或点右上角 + 新增"))
-                .themedBackground()
+                NavigationSplitView {
+                    ManuscriptListView(selection: $selection, showingNewForm: $showingNewForm)
+                        .navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 450)
+                } detail: {
+                    if let selection {
+                        ManuscriptDetailView(manuscript: selection)
+                    } else {
+                        ContentUnavailableView("选择一篇稿件", systemImage: "sidebar.right",
+                            description: Text("在左侧稿件列表中选择一篇稿件或点右上角 + 新增投稿记录"))
+                        .themedBackground()
+                    }
+                }
             }
         }
         .themedBackground()
@@ -61,7 +62,7 @@ public struct ContentView: View {
                     Text("全局动态").tag("timeline")
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 170)
+                .frame(width: 180)
             }
 
             ToolbarItem(placement: .primaryAction) {

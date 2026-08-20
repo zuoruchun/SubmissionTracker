@@ -1,7 +1,7 @@
 import SwiftUI
 import SwiftData
 
-// MARK: - 动态流条目模型
+// MARK: - 全局动态事件模型
 
 struct TimelineFeedItem: Identifiable {
     var id: String
@@ -34,20 +34,15 @@ struct TimelineFeedItem: Identifiable {
     }
 }
 
-// MARK: - 全局投稿动态流视图
+// MARK: - 全局投稿时间流页面 (替代看板的完整页面)
 
 struct GlobalTimelineView: View {
     @Query private var allManuscripts: [Manuscript]
     @EnvironmentObject var filter: FilterState
-    @Binding var selection: Manuscript?
-    @Binding var showingNewForm: Bool
 
     @State private var previewPayload: FilePreviewPayload?
-
-    init(selection: Binding<Manuscript?>, showingNewForm: Binding<Bool>) {
-        self._selection = selection
-        self._showingNewForm = showingNewForm
-    }
+    @State private var inspectedManuscript: Manuscript?
+    @State private var showingEditForm = false
 
     // 展平并构建所有动态事件
     private var allFeedItems: [TimelineFeedItem] {
@@ -111,7 +106,7 @@ struct GlobalTimelineView: View {
             if !hit { return false }
         }
 
-        // 2. 状态匹配（精准匹配该事件节点的状态）
+        // 2. 状态匹配
         if !filter.statusFilter.isEmpty, !filter.statusFilter.contains(item.status) {
             return false
         }
@@ -159,62 +154,107 @@ struct GlobalTimelineView: View {
     }
 
     var body: some View {
-        List(selection: $selection) {
-            if visibleFeedItems.isEmpty {
-                ContentUnavailableView(
-                    "暂无动态记录",
-                    systemImage: "calendar.badge.clock",
-                    description: Text(filter.hasActiveFilter ? "尝试清除筛选条件" : "点击右上角 + 记录第一篇投稿")
-                )
-                .listRowSeparator(.hidden)
-            }
+        VStack(spacing: 0) {
+            // 顶部多维筛选控制条
+            filterHeaderBar
 
-            ForEach(groupedFeed, id: \.header) { group in
-                Section {
-                    ForEach(group.items) { item in
-                        TimelineFeedRow(
-                            item: item,
-                            isSelected: selection?.id == item.manuscript.id,
-                            onOpenAttachment: { att in
-                                openPDF(for: att, manuscriptTitle: item.manuscript.title)
-                            }
+            Divider()
+
+            // 上下滑动的时间线主体
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    if visibleFeedItems.isEmpty {
+                        ContentUnavailableView(
+                            "暂无动态记录",
+                            systemImage: "calendar.badge.clock",
+                            description: Text(filter.hasActiveFilter ? "尝试清除或放宽筛选条件" : "点击右上角 + 记录第一篇投稿")
                         )
-                        .tag(item.manuscript)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                        .padding(.top, 60)
+                    } else {
+                        ForEach(groupedFeed, id: \.header) { group in
+                            VStack(alignment: .leading, spacing: 14) {
+                                // 年月分组大标题
+                                HStack(spacing: 8) {
+                                    Text(group.header)
+                                        .font(AppTheme.serifTitle(22))
+                                        .foregroundStyle(.primary)
+                                    Text("(\((group.items.count)) 条动态)")
+                                        .font(AppTheme.monoLabel(12))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .padding(.leading, 6)
+
+                                // 组内纵向连线时间轴
+                                VStack(alignment: .leading, spacing: 0) {
+                                    ForEach(Array(group.items.enumerated()), id: \.element.id) { index, item in
+                                        TimelineEventRow(
+                                            item: item,
+                                            isFirst: index == 0,
+                                            isLast: index == group.items.count - 1,
+                                            onOpenAttachment: { att in
+                                                openPDF(for: att, manuscriptTitle: item.manuscript.title)
+                                            },
+                                            onInspectManuscript: {
+                                                inspectedManuscript = item.manuscript
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
-                } header: {
-                    Text(group.header)
-                        .font(AppTheme.serifTitle(18))
-                        .foregroundStyle(.primary)
-                        .padding(.vertical, 4)
                 }
+                .padding(.horizontal, 32)
+                .padding(.vertical, 24)
+                .frame(maxWidth: 960, alignment: .leading)
+                .frame(maxWidth: .infinity)
             }
         }
-        .listStyle(.inset)
         .themedBackground()
-        .safeAreaInset(edge: .bottom) {
-            filterBar
-        }
-        .searchable(text: $filter.searchText, placement: .toolbar, prompt: "搜索论文 / 期刊 / 稿件号 / 标签")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showingNewForm = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .help("新增投稿记录 (⌘N)")
-            }
-        }
         .sheet(item: $previewPayload) { payload in
             PDFViewerSheet(payload: payload)
         }
+        .sheet(item: $inspectedManuscript) { m in
+            NavigationStack {
+                ManuscriptDetailView(manuscript: m)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("关闭") { inspectedManuscript = nil }
+                        }
+                    }
+            }
+            .frame(minWidth: 780, minHeight: 560)
+        }
     }
 
-    // MARK: - 底部快捷筛选条
+    // MARK: - 顶部筛选栏
 
-    private var filterBar: some View {
-        HStack(spacing: 8) {
+    private var filterHeaderBar: some View {
+        HStack(spacing: 12) {
+            // 搜索框
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("搜索论文 / 期刊 / 稿件号 / 标签 / 备注", text: $filter.searchText)
+                    .textFieldStyle(.plain)
+                    .font(AppTheme.serifBody(13))
+                if !filter.searchText.isEmpty {
+                    Button {
+                        filter.searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .frame(maxWidth: 320)
+
+            // 状态胶囊筛选
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(ManuscriptStatus.allCases) { status in
@@ -230,17 +270,18 @@ struct GlobalTimelineView: View {
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(
                             isOn ? AppTheme.statusColor(status).opacity(0.25)
-                                  : Color.primary.opacity(0.06)
+                                  : Color.primary.opacity(0.05)
                         )
                         .foregroundStyle(isOn ? AppTheme.statusColor(status) : .secondary)
                         .clipShape(Capsule())
                     }
                 }
-                .padding(.horizontal, 4)
             }
 
+            Spacer()
+
+            // 更多筛选菜单
             Menu {
-                // 期刊筛选
                 let venues = FilterState.allVenues(from: allManuscripts)
                 if !venues.isEmpty {
                     Menu("按期刊筛选") {
@@ -252,7 +293,6 @@ struct GlobalTimelineView: View {
                     }
                 }
 
-                // 截止日期
                 Menu("修改截止倒计时") {
                     ForEach(DeadlineFilterOption.allCases) { opt in
                         Button(opt.rawValue) { filter.deadlineFilter = opt }
@@ -261,7 +301,6 @@ struct GlobalTimelineView: View {
 
                 Toggle("仅看含附件", isOn: $filter.onlyWithAttachments)
 
-                // 标签筛选
                 let tags = FilterState.allTags(from: allManuscripts)
                 if !tags.isEmpty {
                     Divider()
@@ -284,13 +323,14 @@ struct GlobalTimelineView: View {
                     }
                 }
             } label: {
-                Image(systemName: filter.hasActiveFilter ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                Label("筛选", systemImage: filter.hasActiveFilter ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    .font(AppTheme.monoLabel(12))
             }
-            .buttonStyle(.plain)
-            .help("多维筛选与期刊过滤")
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
         .background(Color.primary.opacity(0.02))
     }
 
@@ -306,126 +346,167 @@ struct GlobalTimelineView: View {
     }
 }
 
-// MARK: - 动态流单条卡片
+// MARK: - 纵向时间轴单事件卡片 (TimelineEventRow)
 
-struct TimelineFeedRow: View {
+struct TimelineEventRow: View {
     let item: TimelineFeedItem
-    let isSelected: Bool
+    let isFirst: Bool
+    let isLast: Bool
     let onOpenAttachment: (Attachment) -> Void
+    let onInspectManuscript: () -> Void
 
     private var daysAgoText: String {
         let days = Calendar.current.dateComponents([.day], from: item.date, to: Date()).day ?? 0
         if days == 0 { return "今天" }
         if days == 1 { return "昨天" }
-        if days < 30 { return "\(days)天前" }
+        if days < 30 { return "\(days) 天前" }
         let months = days / 30
-        return "\(months)个月前"
+        return "\(months) 个月前"
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // 头部：日期 + 状态徽章 + 阶段轮次 + 距今
-            HStack(spacing: 8) {
-                Text(item.date, format: .dateTime.month(.twoDigits).day(.twoDigits))
-                    .font(AppTheme.monoLabel(12))
-                    .foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: 16) {
+            // 左侧纵向时间连线 + 状态圆点
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(isFirst ? Color.clear : Color.primary.opacity(0.15))
+                    .frame(width: 2)
+                    .frame(height: 12)
 
-                AppTheme.statusBadge(item.status)
+                Circle()
+                    .fill(AppTheme.statusColor(item.status))
+                    .frame(width: 11, height: 11)
+                    .overlay(Circle().stroke(Color.primary.opacity(0.1), lineWidth: 1))
 
-                if !item.stage.isEmpty {
-                    Text(item.stage)
-                        .font(AppTheme.monoLabel(10))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Color.primary.opacity(0.08))
-                        .clipShape(Capsule())
-                }
-
-                Spacer()
-
-                Text(daysAgoText)
-                    .font(AppTheme.monoLabel(10))
-                    .foregroundStyle(.tertiary)
+                Rectangle()
+                    .fill(isLast ? Color.clear : Color.primary.opacity(0.15))
+                    .frame(width: 2)
+                    .frame(maxHeight: .infinity)
             }
+            .frame(width: 14)
 
-            // 论文标题
-            Text(item.manuscript.title)
-                .font(AppTheme.serifBody(14))
-                .fontWeight(.medium)
-                .lineLimit(2)
-                .foregroundStyle(.primary)
+            // 右侧事件卡片
+            VStack(alignment: .leading, spacing: 8) {
+                // 顶部：日期 · 距今 · 状态徽章 · 轮次
+                HStack(spacing: 8) {
+                    Text(item.date, format: .dateTime.month(.twoDigits).day(.twoDigits))
+                        .font(AppTheme.monoLabel(13))
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.primary)
 
-            // 期刊信息与截止时间
-            HStack(spacing: 8) {
-                Label(item.manuscript.venue, systemImage: AppTheme.venueIcon(item.manuscript.venueType))
-                    .font(AppTheme.serifBody(11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                if !item.manuscript.manuscriptNumber.isEmpty {
-                    Text("#\(item.manuscript.manuscriptNumber)")
-                        .font(AppTheme.monoLabel(10))
+                    Text("(\((daysAgoText)))")
+                        .font(AppTheme.monoLabel(11))
                         .foregroundStyle(.tertiary)
-                }
 
-                Spacer()
+                    AppTheme.statusBadge(item.status)
 
-                if let dl = item.manuscript.deadlineDate {
-                    let days = Calendar.current.dateComponents([.day], from: Date(), to: dl).day ?? 0
-                    let text = days >= 0 ? "剩 \(days) 天" : "逾期 \(abs(days)) 天"
-                    HStack(spacing: 4) {
-                        Image(systemName: "calendar.badge.clock")
-                        Text(text)
+                    if !item.stage.isEmpty {
+                        Text(item.stage)
+                            .font(AppTheme.monoLabel(10))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1.5)
+                            .background(AppTheme.navy.opacity(0.1))
+                            .foregroundStyle(AppTheme.navy)
+                            .clipShape(Capsule())
                     }
-                    .font(AppTheme.monoLabel(10))
-                    .foregroundStyle(days < 7 ? AppTheme.brick : AppTheme.ochre)
+
+                    Spacer()
+
+                    if let dl = item.manuscript.deadlineDate {
+                        let days = Calendar.current.dateComponents([.day], from: Date(), to: dl).day ?? 0
+                        let text = days >= 0 ? "剩 \(days) 天" : "已逾期 \(abs(days)) 天"
+                        HStack(spacing: 4) {
+                            Image(systemName: "calendar.badge.clock")
+                            Text(text)
+                        }
+                        .font(AppTheme.monoLabel(10))
+                        .foregroundStyle(days < 7 ? AppTheme.brick : AppTheme.ochre)
+                    }
                 }
-            }
 
-            // 备注
-            if !item.note.isEmpty {
-                Text(item.note)
-                    .font(AppTheme.serifBody(12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .padding(.top, 1)
-            }
+                // 论文标题（可点击直接查看这篇论文的详情）
+                Button {
+                    onInspectManuscript()
+                } label: {
+                    Text(item.manuscript.title)
+                        .font(AppTheme.serifBody(16))
+                        .fontWeight(.medium)
+                        .lineLimit(2)
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
+                }
+                .buttonStyle(.plain)
 
-            // 绑定的附件可点击 Chips
-            if !item.attachments.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(item.attachments) { att in
-                            Button {
-                                onOpenAttachment(att)
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "doc.text.fill")
-                                        .font(.system(size: 10))
-                                    Text(att.displayName.isEmpty ? att.fileType.displayNameZh : att.displayName)
-                                        .font(AppTheme.monoLabel(10))
-                                        .lineLimit(1)
+                // 期刊信息
+                HStack(spacing: 8) {
+                    Label(item.manuscript.venue, systemImage: AppTheme.venueIcon(item.manuscript.venueType))
+                        .font(AppTheme.serifBody(12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    if !item.manuscript.manuscriptNumber.isEmpty {
+                        Text("#\(item.manuscript.manuscriptNumber)")
+                            .font(AppTheme.monoLabel(11))
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        onInspectManuscript()
+                    } label: {
+                        Label("查看稿件详情", systemImage: "arrow.up.forward.app")
+                            .font(AppTheme.monoLabel(10))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                }
+
+                // 动态备注说明
+                if !item.note.isEmpty {
+                    Text(item.note)
+                        .font(AppTheme.serifBody(13))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
+                }
+
+                // 本轮绑定的附件 Chips (带 PDFKit 原生查看)
+                if !item.attachments.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(item.attachments) { att in
+                                Button {
+                                    onOpenAttachment(att)
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "doc.text.fill")
+                                            .font(.system(size: 10))
+                                        let name = att.displayName.isEmpty ? (att.originalFileName.isEmpty ? att.fileType.displayNameZh : att.originalFileName) : att.displayName
+                                        Text(name)
+                                            .font(AppTheme.monoLabel(10))
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3.5)
+                                    .background(AppTheme.navy.opacity(0.1))
+                                    .foregroundStyle(AppTheme.navy)
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
                                 }
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(AppTheme.navy.opacity(0.1))
-                                .foregroundStyle(AppTheme.navy)
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                                .buttonStyle(.plain)
+                                .help("点击在 App 内查看 PDF: \(att.originalFileName)")
                             }
-                            .buttonStyle(.plain)
-                            .help("点击在 App 内查看 PDF: \(att.originalFileName)")
                         }
                     }
+                    .padding(.top, 2)
                 }
-                .padding(.top, 2)
             }
+            .padding(14)
+            .background(Color.primary.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+            )
+            .padding(.bottom, 16)
         }
-        .padding(10)
-        .background(isSelected ? AppTheme.navy.opacity(0.06) : Color.primary.opacity(0.02))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? AppTheme.navy.opacity(0.3) : Color.primary.opacity(0.06), lineWidth: 1)
-        )
     }
 }
