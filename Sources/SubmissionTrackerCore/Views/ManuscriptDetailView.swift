@@ -34,8 +34,11 @@ struct ManuscriptDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 20) {
                 header
+                if manuscript.currentStatus == .accept || manuscript.currentStatus == .published {
+                    celebrationBanner
+                }
                 timelineSection
                 notesSection
             }
@@ -129,6 +132,36 @@ struct ManuscriptDetailView: View {
         }
     }
 
+    // MARK: - 录用祝贺横幅 (版本 4)
+
+    private var celebrationBanner: some View {
+        HStack(alignment: .center, spacing: 14) {
+            Text("🥳")
+                .font(.system(size: 30))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("大功告成，成功录用！🎊✨")
+                    .font(AppTheme.serifTitle(16))
+                    .foregroundStyle(AppTheme.moss)
+
+                Text("Paper Accepted! 所有的反复推敲与深夜修改都有了最好的回音，为你喝彩！💐🍾")
+                    .font(AppTheme.serifBody(13))
+                    .foregroundStyle(.primary.opacity(0.85))
+            }
+
+            Spacer()
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(AppTheme.moss.opacity(0.09))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(AppTheme.moss.opacity(0.25), lineWidth: 1)
+        )
+    }
+
     // MARK: - 头部
 
     private var daysSinceLastStatus: Int {
@@ -167,7 +200,7 @@ struct ManuscriptDetailView: View {
                     .foregroundStyle(.tertiary)
             }
 
-            // 快捷外链（投稿系统、作者指南）
+            // 快捷外链（投稿系统、已发表论文在线地址）
             if !manuscript.submissionSystemURL.isEmpty || !manuscript.authorGuideURL.isEmpty {
                 HStack(spacing: 12) {
                     if let url = URL(string: manuscript.submissionSystemURL), !manuscript.submissionSystemURL.isEmpty {
@@ -177,8 +210,9 @@ struct ManuscriptDetailView: View {
                         }
                     }
                     if let url = URL(string: manuscript.authorGuideURL), !manuscript.authorGuideURL.isEmpty {
+                        let labelText = (manuscript.currentStatus == .accept || manuscript.currentStatus == .published) ? "已发表论文在线地址 ↗" : "期刊/在线链接 ↗"
                         Link(destination: url) {
-                            Label("作者指南 ↗", systemImage: "book")
+                            Label(labelText, systemImage: "link")
                                 .font(AppTheme.monoLabel(11))
                         }
                     }
