@@ -132,21 +132,22 @@ struct ManuscriptDetailView: View {
         }
     }
 
-    // MARK: - 录用祝贺横幅 (版本 4)
+    // MARK: - 录用祝贺横幅 (专属确定性随机文案)
 
     private var celebrationBanner: some View {
-        HStack(alignment: .center, spacing: 14) {
-            Text("🥳")
-                .font(.system(size: 30))
+        let msg = CelebrationMessages.message(for: manuscript)
+        return HStack(alignment: .center, spacing: 14) {
+            Text(msg.emoji)
+                .font(.system(size: 32))
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("大功告成，成功录用！🎊✨")
+                Text(msg.title)
                     .font(AppTheme.serifTitle(16))
                     .foregroundStyle(AppTheme.moss)
 
-                Text("Paper Accepted! 所有的反复推敲与深夜修改都有了最好的回音，为你喝彩！💐🍾")
+                Text(msg.body)
                     .font(AppTheme.serifBody(13))
-                    .foregroundStyle(.primary.opacity(0.85))
+                    .foregroundStyle(.primary.opacity(0.88))
             }
 
             Spacer()
@@ -648,5 +649,107 @@ private struct QuickLookPreviewPane: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .onAppear { selectedURL = url }
             .onChange(of: url) { selectedURL = url }
+    }
+}
+
+// MARK: - 录用祝贺文案库与确定性伪随机选择器
+
+struct CelebrationMessage {
+    let emoji: String
+    let title: String
+    let body: String
+}
+
+enum CelebrationMessages {
+    static let list: [CelebrationMessage] = [
+        CelebrationMessage(
+            emoji: "🥳",
+            title: "大功告成，成功录用！🎊✨",
+            body: "Paper Accepted! 所有的反复推敲与深夜修改都有了最好的回音，为你喝彩！💐🍾"
+        ),
+        CelebrationMessage(
+            emoji: "🎉",
+            title: "恭喜！论文已被正式接收！🏆",
+            body: "从初稿到修回，严谨的数学推导与扎实的研究终获学界同行高度认可！"
+        ),
+        CelebrationMessage(
+            emoji: "🎆",
+            title: "苦尽甘来，顺利通关！✨",
+            body: "攻克审稿意见，精益求精。祝贺研究成果顺利接收，科研旅途再添高光时刻！"
+        ),
+        CelebrationMessage(
+            emoji: "🍾",
+            title: "开香槟！录用通知已抵达！🥂",
+            body: "字斟句酌的推演，披星戴月的付出，在这一刻凝聚成最耀眼的成果！"
+        ),
+        CelebrationMessage(
+            emoji: "🌟",
+            title: "学术再攀高峰，成功接收！🎯",
+            body: "祝贺论文被优秀期刊录用！愿你的学术之路星光璀璨，成果不断！"
+        ),
+        CelebrationMessage(
+            emoji: "💐",
+            title: "圆满收官，正式录用！👏",
+            body: "每一处公式细节与逻辑打磨都在发光。祝贺录用，期待论文早日正式见刊！"
+        ),
+        CelebrationMessage(
+            emoji: "🔥",
+            title: "实至名归，顺利录用！🚀",
+            body: "高水平的研究成果值得被全世界学者看见！向扎实严谨的学者致敬！"
+        ),
+        CelebrationMessage(
+            emoji: "🎓",
+            title: "科研捷报！论文通过同行评审！📜",
+            body: "严谨推导，深邃洞察。经过严苛评审后顺利接收，为你的学术履历再添浓墨重彩的一笔！"
+        ),
+        CelebrationMessage(
+            emoji: "✨",
+            title: "星光不问赶路人，论文已接收！🌈",
+            body: "无数个专注推演的日夜终于迎来最圆满的答卷。祝贺你，优秀的学者！"
+        ),
+        CelebrationMessage(
+            emoji: "🎊",
+            title: "喜提录用！完美的科研成果！💎",
+            body: "严谨求实，终成佳作。审稿专家的肯定是对你学术造诣的最佳奖赏！"
+        ),
+        CelebrationMessage(
+            emoji: "🎈",
+            title: "通关留念！论文正式接收！🏅",
+            body: "从 Response Letter 到最终定稿，每一步都走得无比坚定扎实。为你感到骄傲！"
+        ),
+        CelebrationMessage(
+            emoji: "🏆",
+            title: "学术丰碑再立，恭喜录用！🌿",
+            body: "用智慧与汗水凝结的学术论文终获圆满。科研漫漫，愿你乘风破浪再创辉煌！"
+        ),
+        CelebrationMessage(
+            emoji: "🍻",
+            title: "千锤百炼，终获录用！⚡️",
+            body: "经历了细致入微的评审与完善，文章愈发精醇严谨。祝贺顺利接收！"
+        ),
+        CelebrationMessage(
+            emoji: "🪐",
+            title: "探索未知，成果落成！💫",
+            body: "数学的世界浩瀚深邃，你的探索为这一领域增添了坚实的新基石。恭喜发表！"
+        ),
+        CelebrationMessage(
+            emoji: "🌸",
+            title: "花开有期，论文顺利接收！🕊",
+            body: "笃行致远，不负热爱。每一篇用心浇灌的学术成果，都会在最美的时刻绽放！"
+        ),
+        CelebrationMessage(
+            emoji: "🥂",
+            title: "捷报频传，正式录用！🎉",
+            body: "扎实的理论证明与精妙的算法构想，恭喜论文被录用并即将与全球读者见面！"
+        )
+    ]
+
+    /// 基于稿件稳定属性（ID 与创建时间）计算确定性索引，保证每篇论文分配到不同文案，且每次打开保持一致
+    static func message(for manuscript: Manuscript) -> CelebrationMessage {
+        var hasher = Hasher()
+        hasher.combine(manuscript.id)
+        hasher.combine(manuscript.createdAt.timeIntervalSince1970)
+        let hash = abs(hasher.finalize())
+        return list[hash % list.count]
     }
 }
