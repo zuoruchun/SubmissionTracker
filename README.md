@@ -1,68 +1,53 @@
-# 投稿追踪（SubmissionTracker）
+# 投稿追踪 (SubmissionTracker)
 
-管理论文投稿记录的 macOS 原生 App（SwiftUI + SwiftData），
-支持 iOS/iPadOS 版本，两端通过 iCloud（CloudKit）自动同步。
-视觉风格参考"研究者的私人笔记本"：米白纸张底色、衬线标题、
-等宽字体日期与状态标签、克制的强调色。
+专为高校学者、科研人员与研究生打造的学术论文全生命周期管理 macOS 原生应用。基于 **SwiftUI** 与 **SwiftData** 构建，采用“**研究者的私人笔记本**”视觉设计美学（米白纸张底色、典雅衬线标题、等宽状态标签与克制强调色）。
 
-## 当前进度（MVP）
+---
 
-- [x] 数据模型（SwiftData，CloudKit 安全）：Manuscript / StatusLogEntry / Attachment
-- [x] 列表 + 详情双栏布局，按月分组（大号年月标题）
-- [x] 状态时间线（可追加状态变更记录）
-- [x] 文件关联：NSOpenPanel 选文件 + security-scoped bookmark 存储
-- [x] 内嵌 QuickLook 预览（`.quickLookPreview`，macOS 11+ / iOS 14+）
-- [x] "在 Finder 中显示"
-- [x] 搜索（标题/期刊/标签/备注）+ 状态多选筛选 + 标签筛选 + 排序
-- [x] 新增/编辑表单（含截止日期 → 本地通知提醒）
-- [x] 看板视图（按状态分列，拖拽切换状态并自动记录）
-- [x] 附件管理（手稿/审稿意见/回复信/补充材料）
-- [x] 导出 CSV / Markdown 报告 / JSON 备份与恢复
-- [x] 深色模式适配
-- [x] 列表/看板视图切换（窗口大小记忆由 macOS frame autosave 提供）
+## 🌟 核心功能
 
-待做（进阶）：日历/甘特视图、菜单栏入口、Widget、Spotlight、
-统计仪表盘（Swift Charts）、多语言切换、审稿意见管理、合作者视图、
-iOS 目标与真实 CloudKit 容器配置（见下）。
+- 📅 **全生命周期状态时间线**
+  - 精准记录从初次投稿、编辑部处理、送外审、等待修回（大修/小修）、修改稿提交（R1/R2/R3…）到正式录用的完整链路。
+- 🌐 **全局动态时间流 (Global Timeline)**
+  - 汇总所有论文的全局事件演进，纵向连线展示；支持鼠标悬浮论文标题动态下划线高亮，点击直达论文详情并支持一键返回。
+- 📄 **原生 PDFKit 预览与版本文件关联**
+  - 手稿、修改稿、审稿意见与回复信直接挂载至对应状态节点，状态右侧一键秒开 PDF 查看器。
+- 🥳 **论文录用专属祝贺横幅**
+  - 论文被期刊正式接收（Accepted）后自动浮现专属祝贺横幅；内置 16 款不同风格文案，采用确定性伪随机算法为每篇论文分配稳定且专属的庆祝文案。
+- ☁️ **坚果云 / WebDAV 云同步**
+  - 支持坚果云及任意标准 WebDAV 服务端双向自动同步；元数据与文件本地托管，支持导出 CSV / Markdown 报告 / JSON 备份。
+- 🔒 **Local-First 本地优先与隐私安全**
+  - 数据完全存储于本地，零外部数据上报，代码不嵌入任何个人隐私信息。
 
-## 编译（命令行）
+---
 
+## 🚀 快速安装与运行
+
+### 方式一：直接下载 Release（推荐）
+
+1. 在仓库的 **[Releases](https://github.com/zuoruchun/SubmissionTracker/releases)** 页面下载最新的 `SubmissionTracker-macOS.zip`；
+2. 解压后将 `SubmissionTracker.app` 拖入系统的 **应用程序 (Applications)** 文件夹即可打开使用。
+
+### 方式二：源码编译 Release
+
+确保系统已安装 Xcode 15+ 或 Swift 5.10+：
+
+```bash
+git clone https://github.com/zuoruchun/SubmissionTracker.git
+cd SubmissionTracker
+swift build -c release
 ```
-swift build          # macOS 可执行版本（开发验证用）
-```
 
-产物：`.build/debug/SubmissionTracker`
+---
 
-## 用 Xcode 构建正式 App（含 iCloud 同步）
+## 🛠 技术栈与系统要求
 
-1. 安装 xcodegen（如未装）：`brew install xcodegen`
-2. 在本目录执行：`xcodegen generate`（依据 `project.yml`）
-3. 打开生成的 `SubmissionTracker.xcodeproj`，在 Signing & Capabilities 中：
-   - 选择你的 Team（自动签名）
-   - 添加 **iCloud** capability → 勾选 **CloudKit**
-   - 新建容器 `iCloud.com.zuoruchun.SubmissionTracker`
-     （需在 Apple Developer 后台已登录同一 Apple ID）
-4. 选择 macOS 目标 Run 即可。未配置容器前，App 会回退到**仅本地**存储，
-   不影响使用；配置完成重启即自动启用云端同步。
+- **操作系统**：macOS 14.0 (Sonoma) 及以上版本
+- **核心框架**：SwiftUI, SwiftData, PDFKit, UniformTypeIdentifiers, AppKit
+- **架构设计**：Local-First 架构，多端适配准备
 
-> 注意：CloudKit 只同步元数据（含 bookmark 字节）。
-> 文件本体依赖用户的 iCloud Drive 多设备可达性；
-> 每台设备需要用本机可解析的 bookmark（`FileService.resolvedURL` 处理）。
+---
 
-## 项目结构
+## 📄 开源许可
 
-```
-SubmissionTracker/
-├── Package.swift                 # SPM：核心库 + macOS 可执行目标
-├── project.yml                   # xcodegen 规格（Xcode 工程）
-├── Entitlements/                 # 沙盒 + 文件访问 + CloudKit 容器
-├── Sources/
-│   ├── SubmissionTrackerCore/    # 跨平台共享代码
-│   │   ├── Models/               # SwiftData 模型与枚举（CloudKit 安全）
-│   │   ├── Services/             # FileService / NotificationService / ExportService / SyncConfig
-│   │   ├── ViewModels/           # FilterState（搜索/筛选/排序）
-│   │   ├── Views/                # 列表/详情/时间线/看板/表单
-│   │   └── Theme/                # "私人笔记本"视觉主题
-│   └── SubmissionTrackerApp/     # macOS App 入口（@main）
-└── _codex_sessions/              # 会话记录
-```
+本项目基于 [MIT License](LICENSE) 开源。
