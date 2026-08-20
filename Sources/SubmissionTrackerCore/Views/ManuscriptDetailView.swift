@@ -36,9 +36,8 @@ struct ManuscriptDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 22) {
                 header
-                filesAndAttachmentsSection
                 timelineSection
                 notesSection
             }
@@ -222,121 +221,10 @@ struct ManuscriptDetailView: View {
         }
     }
 
-    // MARK: - 论文文件与附件（统一管理）
-
-    private var filesAndAttachmentsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                sectionTitle("论文文件与附件")
-                Spacer()
-                Button {
-                    startAddAttachment(targetLog: nil)
-                } label: {
-                    Label("添加附件 / 补充材料", systemImage: "plus.circle")
-                }
-                .font(AppTheme.monoLabel(11))
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-
-            let attachments = manuscript.sortedAttachments
-
-            if attachments.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("暂未关联任何本地托管附件（支持导入 TeX/PDF 主手稿、审稿意见、回复信或补充材料）")
-                        .font(AppTheme.serifBody(12))
-                        .foregroundStyle(.secondary)
-                    HStack(spacing: 10) {
-                        Button {
-                            startAddAttachment(targetLog: nil)
-                        } label: {
-                            Label("导入并绑定附件…", systemImage: "doc.badge.plus")
-                        }
-                        .font(AppTheme.monoLabel(11))
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                    }
-                    .padding(.top, 2)
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.03))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                VStack(spacing: 8) {
-                    ForEach(attachments) { att in
-                        HStack(spacing: 8) {
-                            Text(att.fileType.displayNameZh)
-                                .font(AppTheme.monoLabel(11))
-                                .padding(.horizontal, 7).padding(.vertical, 2)
-                                .background(AppTheme.navy.opacity(0.1))
-                                .foregroundStyle(AppTheme.navy)
-                                .clipShape(Capsule())
-
-                            if let stage = att.statusLog?.stage, !stage.isEmpty {
-                                Text(stage)
-                                    .font(AppTheme.monoLabel(10))
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            Image(systemName: "doc.text.fill")
-                                .foregroundStyle(AppTheme.navy)
-
-                            let name = att.displayName.isEmpty ? (att.originalFileName.isEmpty ? att.fileType.displayNameZh : att.originalFileName) : att.displayName
-                            Text(name)
-                                .font(AppTheme.monoLabel(12))
-                                .lineLimit(1)
-
-                            Spacer()
-
-                            Text(att.addedDate, format: .dateTime.year().month().day())
-                                .font(AppTheme.monoLabel(10))
-                                .foregroundStyle(.tertiary)
-
-                            // PDFKit 快速查看
-                            Button("查看") {
-                                openPDFViewer(for: att)
-                            }
-                            .font(AppTheme.monoLabel(10))
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.mini)
-
-                            Button("Finder") {
-                                if let url = FileService.resolveURL(for: att), FileManager.default.fileExists(atPath: url.path) {
-                                    FileService.reveal(url: url)
-                                } else {
-                                    fileAlertMessage = "本地暂未找到文件路径。"
-                                    showingFileAlert = true
-                                }
-                            }
-                            .font(AppTheme.monoLabel(10))
-                            .buttonStyle(.bordered)
-                            .controlSize(.mini)
-
-                            Button {
-                                attachmentToDelete = att
-                                showingDeleteAttachmentAlert = true
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .buttonStyle(.plain)
-                            .help("移除附件")
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 10)
-                        .background(Color.primary.opacity(0.03))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - 状态时间线
+    // MARK: - 状态时间线 (融合展示论文版本与附件)
 
     private var timelineSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 sectionTitle("状态时间线")
                 Spacer()
@@ -352,9 +240,15 @@ struct ManuscriptDetailView: View {
 
             let logs = manuscript.sortedStatusLogs
             if logs.isEmpty {
-                Text("尚无状态记录")
-                    .font(AppTheme.serifBody(12))
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("尚无状态记录（点右上角“追加状态记录”记录初投、大修、小修或接收）")
+                        .font(AppTheme.serifBody(12))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.025))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(logs.enumerated()), id: \.element.id) { index, log in
@@ -379,7 +273,7 @@ struct ManuscriptDetailView: View {
                             }
                             .frame(width: 10)
 
-                            VStack(alignment: .leading, spacing: 5) {
+                            VStack(alignment: .leading, spacing: 6) {
                                 HStack(spacing: 8) {
                                     AppTheme.statusBadge(log.status)
 
@@ -395,15 +289,58 @@ struct ManuscriptDetailView: View {
                                         .font(AppTheme.monoLabel(11))
                                         .foregroundStyle(.tertiary)
 
+                                    // 节点绑定的论文文件 / 附件 Chips（直接在状态徽章与日期后展示，点击直接在 App 内看 PDF）
+                                    let logAtts = log.sortedAttachments
+                                    ForEach(logAtts) { att in
+                                        Button {
+                                            openPDFViewer(for: att)
+                                        } label: {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "doc.text.fill")
+                                                    .font(.system(size: 10))
+                                                let name = att.displayName.isEmpty ? (att.originalFileName.isEmpty ? att.fileType.displayNameZh : att.originalFileName) : att.displayName
+                                                Text(name)
+                                                    .font(AppTheme.monoLabel(10))
+                                                Image(systemName: "eye")
+                                                    .font(.system(size: 9))
+                                                    .opacity(0.7)
+                                            }
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 2.5)
+                                            .background(AppTheme.navy.opacity(0.12))
+                                            .foregroundStyle(AppTheme.navy)
+                                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("点击在 App 内查看论文 PDF: \(att.originalFileName)")
+                                        .contextMenu {
+                                            Button("在 Finder 中显示") {
+                                                if let url = FileService.resolveURL(for: att), FileManager.default.fileExists(atPath: url.path) {
+                                                    FileService.reveal(url: url)
+                                                }
+                                            }
+                                            Button("用外部应用打开") {
+                                                if let url = FileService.resolveURL(for: att) {
+                                                    FileService.openExternally(url: url)
+                                                }
+                                            }
+                                            Divider()
+                                            Button("移除该文件", role: .destructive) {
+                                                attachmentToDelete = att
+                                                showingDeleteAttachmentAlert = true
+                                            }
+                                        }
+                                    }
+
                                     Spacer()
 
-                                    // 给具体节点添加附件的入口
+                                    // 节点右侧的轻量添加/追加文件按钮
                                     Button {
                                         startAddAttachment(targetLog: log)
                                     } label: {
-                                        Label("绑定附件", systemImage: "paperclip.badge.ellipsis")
+                                        Label(logAtts.isEmpty ? "添加论文/附件" : "更换/追加", systemImage: logAtts.isEmpty ? "plus.circle" : "arrow.triangle.2.circlepath")
+                                            .font(AppTheme.monoLabel(10))
                                     }
-                                    .font(AppTheme.monoLabel(10))
                                     .buttonStyle(.bordered)
                                     .controlSize(.mini)
                                 }
@@ -411,34 +348,6 @@ struct ManuscriptDetailView: View {
                                 if !log.note.isEmpty {
                                     Text(log.note)
                                         .font(AppTheme.serifBody(13))
-                                }
-
-                                // 节点绑定的附件 Chips (带 PDFKit 预览)
-                                let logAtts = log.sortedAttachments
-                                if !logAtts.isEmpty {
-                                    HStack(spacing: 6) {
-                                        ForEach(logAtts) { att in
-                                            Button {
-                                                openPDFViewer(for: att)
-                                            } label: {
-                                                HStack(spacing: 4) {
-                                                    Image(systemName: "doc.text.fill")
-                                                        .font(.system(size: 10))
-                                                    let name = att.displayName.isEmpty ? (att.originalFileName.isEmpty ? att.fileType.displayNameZh : att.originalFileName) : att.displayName
-                                                    Text(name)
-                                                        .font(AppTheme.monoLabel(10))
-                                                }
-                                                .padding(.horizontal, 7)
-                                                .padding(.vertical, 3)
-                                                .background(AppTheme.navy.opacity(0.1))
-                                                .foregroundStyle(AppTheme.navy)
-                                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                                            }
-                                            .buttonStyle(.plain)
-                                            .help("点击在 App 内查看 PDF: \(att.originalFileName)")
-                                        }
-                                    }
-                                    .padding(.top, 2)
                                 }
                             }
                             .padding(.bottom, 16)
@@ -475,7 +384,22 @@ struct ManuscriptDetailView: View {
             guard let picked = await FileService.chooseFile(allowsMultipleSelection: false) else { return }
             guard let first = picked.first else { return }
             self.pendingFile = first
-            self.showingAttachmentTypePicker = true
+
+            // 智能根据状态节点与文件名自动推断类型
+            if let log = targetLog {
+                let inferredType: AttachmentFileType
+                let lower = first.url.lastPathComponent.lowercased()
+                if lower.contains("review") || lower.contains("decision") || lower.contains("comment") || lower.contains("意见") {
+                    inferredType = .reviewComments
+                } else if lower.contains("response") || lower.contains("reply") || lower.contains("回复") {
+                    inferredType = .responseLetter
+                } else {
+                    inferredType = .manuscript
+                }
+                processAttachmentImport(file: first, type: inferredType, log: log)
+            } else {
+                self.showingAttachmentTypePicker = true
+            }
         }
     }
 
