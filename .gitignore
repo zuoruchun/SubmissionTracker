@@ -1,0 +1,38 @@
+# Xcode / Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+*.xcodeproj
+*.xcworkspace
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Application bundle
+*.app
+SubmissionTracker.app/
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Local persistent data & caches
+*.store
+*.store-shm
+*.store-wal
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+
+# Private session notes, metadata archives, and uploaded media
+_codex_sessions/
+.user_uploaded/
+scratch/
+*.bak
+*.tmp
+.env

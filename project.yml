@@ -1,0 +1,27 @@
+# xcodegen spec — run `xcodegen generate` inside this folder to
+# produce the Xcode project for ad-hoc signing, iCloud capability,
+# and the future iOS app target.
+name: SubmissionTracker
+options:
+  bundleIdPrefix: com.zuoruchun
+  deploymentTarget:
+    macOS: "14.0"
+    iOS: "17.0"
+targets:
+  SubmissionTracker:
+    type: application
+    platform: [macOS, iOS]
+    sources: [Sources]
+    info:
+      path: Sources/SubmissionTrackerApp/Info.plist
+      properties:
+        CFBundleDisplayName: 投稿追踪
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        NSHumanReadableCopyright: "© 2026 zuoruchun"
+    entitlements:
+      path: Entitlements/SubmissionTracker.entitlements
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: "NO"
