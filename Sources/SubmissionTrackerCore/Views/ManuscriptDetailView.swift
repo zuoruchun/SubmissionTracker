@@ -19,10 +19,10 @@ struct ManuscriptDetailView: View {
     @State private var pendingFile: (bookmark: Data, path: String, url: URL)?
     @State private var showingAttachmentTypePicker = false
 
-    // PDF 预览
-    @State private var previewAttachment: Attachment?
-    @State private var previewURL: URL?
-    @State private var previewTitle: String = ""
+    // PDF / 附件预览
+    @State private var previewPayload: FilePreviewPayload?
+    @State private var fileAlertMessage: String?
+    @State private var showingFileAlert = false
 
     // 覆盖确认
     @State private var overwriteAlertCandidate: (file: (bookmark: Data, path: String, url: URL), type: AttachmentFileType, log: StatusLogEntry?, existingAtt: Attachment)?
@@ -87,14 +87,13 @@ struct ManuscriptDetailView: View {
                 showingAttachmentTypePicker = false
             }
         }
-        .sheet(item: $previewAttachment) { att in
-            if let url = previewURL {
-                PDFViewerSheet(
-                    fileURL: url,
-                    title: previewTitle,
-                    subtitle: "\(att.fileType.displayNameZh) · \(att.originalFileName)"
-                )
-            }
+        .sheet(item: $previewPayload) { payload in
+            PDFViewerSheet(payload: payload)
+        }
+        .alert("提示", isPresented: $showingFileAlert) {
+            Button("好", role: .cancel) { fileAlertMessage = nil }
+        } message: {
+            Text(fileAlertMessage ?? "")
         }
         .alert("确认覆盖已有附件？", isPresented: $showingOverwriteAlert) {
             Button("取消", role: .cancel) { overwriteAlertCandidate = nil }
@@ -270,7 +269,8 @@ struct ManuscriptDetailView: View {
                             Image(systemName: "doc.text.fill")
                                 .foregroundStyle(AppTheme.navy)
 
-                            Text(att.displayName.isEmpty ? att.originalFileName : att.displayName)
+                            let name = att.displayName.isEmpty ? (att.originalFileName.isEmpty ? att.fileType.displayNameZh : att.originalFileName) : att.displayName
+                            Text(name)
                                 .font(AppTheme.monoLabel(12))
                                 .lineLimit(1)
 
@@ -289,8 +289,11 @@ struct ManuscriptDetailView: View {
                             .controlSize(.mini)
 
                             Button("Finder") {
-                                if let url = FileService.resolveURL(for: att) {
+                                if let url = FileService.resolveURL(for: att), FileManager.default.fileExists(atPath: url.path) {
                                     FileService.reveal(url: url)
+                                } else {
+                                    fileAlertMessage = "本地暂未找到文件路径。"
+                                    showingFileAlert = true
                                 }
                             }
                             .font(AppTheme.monoLabel(10))
@@ -408,7 +411,8 @@ struct ManuscriptDetailView: View {
                                                 HStack(spacing: 4) {
                                                     Image(systemName: "doc.text.fill")
                                                         .font(.system(size: 10))
-                                                    Text(att.displayName.isEmpty ? att.fileType.displayNameZh : att.displayName)
+                                                    let name = att.displayName.isEmpty ? (att.originalFileName.isEmpty ? att.fileType.displayNameZh : att.originalFileName) : att.displayName
+                                                    Text(name)
                                                         .font(AppTheme.monoLabel(10))
                                                 }
                                                 .padding(.horizontal, 7)
@@ -558,10 +562,16 @@ struct ManuscriptDetailView: View {
     }
 
     private func openPDFViewer(for att: Attachment) {
-        if let url = FileService.resolveURL(for: att) {
-            previewURL = url
-            previewTitle = manuscript.title
-            previewAttachment = att
+        if let url = FileService.resolveURL(for: att), FileManager.default.fileExists(atPath: url.path) {
+            let dispName = att.displayName.isEmpty ? (att.originalFileName.isEmpty ? att.fileType.displayNameZh : att.originalFileName) : att.displayName
+            previewPayload = FilePreviewPayload(
+                url: url,
+                title: manuscript.title,
+                subtitle: "\(att.fileType.displayNameZh) · \(dispName)"
+            )
+        } else {
+            fileAlertMessage = "未在本地找到附件实体文件。如果该文件曾关联在外部磁盘，请在节点右侧点击“绑定附件”重新导入。"
+            showingFileAlert = true
         }
     }
 

@@ -42,9 +42,7 @@ struct GlobalTimelineView: View {
     @Binding var selection: Manuscript?
     @Binding var showingNewForm: Bool
 
-    @State private var previewAttachment: Attachment?
-    @State private var previewURL: URL?
-    @State private var previewTitle: String = ""
+    @State private var previewPayload: FilePreviewPayload?
 
     init(selection: Binding<Manuscript?>, showingNewForm: Binding<Bool>) {
         self._selection = selection
@@ -208,14 +206,8 @@ struct GlobalTimelineView: View {
                 .help("新增投稿记录 (⌘N)")
             }
         }
-        .sheet(item: $previewAttachment) { att in
-            if let url = previewURL {
-                PDFViewerSheet(
-                    fileURL: url,
-                    title: previewTitle,
-                    subtitle: att.fileType.displayNameZh + " · " + att.originalFileName
-                )
-            }
+        .sheet(item: $previewPayload) { payload in
+            PDFViewerSheet(payload: payload)
         }
     }
 
@@ -303,10 +295,13 @@ struct GlobalTimelineView: View {
     }
 
     private func openPDF(for att: Attachment, manuscriptTitle: String) {
-        if let url = FileService.resolveURL(for: att) {
-            previewURL = url
-            previewTitle = manuscriptTitle
-            previewAttachment = att
+        if let url = FileService.resolveURL(for: att), FileManager.default.fileExists(atPath: url.path) {
+            let dispName = att.displayName.isEmpty ? (att.originalFileName.isEmpty ? att.fileType.displayNameZh : att.originalFileName) : att.displayName
+            previewPayload = FilePreviewPayload(
+                url: url,
+                title: manuscriptTitle,
+                subtitle: "\(att.fileType.displayNameZh) · \(dispName)"
+            )
         }
     }
 }

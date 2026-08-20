@@ -178,11 +178,19 @@ public enum FileService {
                 return managed
             }
         }
-        return previewURL(bookmark: attachment.fileBookmark, fallbackPath: attachment.filePath)
+        if let url = previewURL(bookmark: attachment.fileBookmark, fallbackPath: attachment.filePath) {
+            return url
+        }
+        return nil
     }
 
     static func resolveURL(for manuscript: Manuscript) -> URL? {
         return previewURL(bookmark: manuscript.fileBookmark, fallbackPath: manuscript.filePath)
+    }
+
+    static func fileExists(for attachment: Attachment) -> Bool {
+        guard let url = resolveURL(for: attachment) else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
     }
 
     // MARK: - Selection
