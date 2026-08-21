@@ -35,22 +35,28 @@ public struct SettingsView: View {
             .padding(.bottom, 8)
 
             TabView(selection: $selectedTab) {
+                appearanceTab
+                    .tabItem {
+                        Label("外观与字号", systemImage: "textformat.size")
+                    }
+                    .tag(0)
+
                 cloudSyncTab
                     .tabItem {
                         Label("云端同步", systemImage: "icloud.and.arrow.up")
                     }
-                    .tag(0)
+                    .tag(1)
 
                 aboutTab
                     .tabItem {
                         Label("关于与备份", systemImage: "info.circle")
                     }
-                    .tag(1)
+                    .tag(2)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
         }
-        .frame(width: 560, height: 500)
+        .frame(width: 580, height: 530)
         .alert("连接测试", isPresented: $showingTestAlert) {
             Button("好", role: .cancel) {}
         } message: {
@@ -68,6 +74,116 @@ public struct SettingsView: View {
             Button("好", role: .cancel) {}
         } message: {
             Text(restoreResultAlert ?? "")
+        }
+    }
+
+    // MARK: - 外观与字号 Tab
+
+    @ObservedObject private var fontManager = FontSizeManager.shared
+
+    private var appearanceTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("全局界面字体大小")
+                        .font(AppTheme.serifTitle(16))
+                    Text("调整 App 整体的排版与文字缩放比例。支持使用快捷键 ⌘+ / ⌘- / ⌘0 随时快速调节。")
+                        .font(AppTheme.serifBody(12))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(12)
+                .background(Color.primary.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("字号预设档位")
+                        .font(AppTheme.monoLabel(12))
+                        .foregroundStyle(.secondary)
+
+                    Picker("字号档位", selection: $fontManager.currentLevel) {
+                        ForEach(FontSizeScaleLevel.allCases) { level in
+                            Text(level.displayNameZh).tag(level)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    HStack {
+                        Button {
+                            fontManager.zoomOut()
+                        } label: {
+                            Label("缩小 (⌘-)", systemImage: "minus.magnifyingglass")
+                        }
+                        .disabled(fontManager.currentLevel == .compact)
+
+                        Spacer()
+
+                        Button {
+                            fontManager.reset()
+                        } label: {
+                            Text("恢复默认 100% (⌘0)")
+                        }
+
+                        Spacer()
+
+                        Button {
+                            fontManager.zoomIn()
+                        } label: {
+                            Label("放大 (⌘+)", systemImage: "plus.magnifyingglass")
+                        }
+                        .disabled(fontManager.currentLevel == .extraLarge)
+                    }
+                    .font(AppTheme.monoLabel(11))
+                    .controlSize(.small)
+                }
+
+                Divider()
+
+                // 实时预览卡片
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("排版实时预览")
+                        .font(AppTheme.monoLabel(12))
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .top) {
+                            Text("A Milstein-type method for time-changed SDEs")
+                                .font(AppTheme.serifTitle(17))
+                            Spacer()
+                            AppTheme.statusBadge(.accept)
+                        }
+
+                        HStack(spacing: 8) {
+                            Image(systemName: "book.closed")
+                                .font(.system(size: 11 * fontManager.scale))
+                                .foregroundStyle(.secondary)
+                            Text("Applied Numerical Mathematics")
+                                .font(AppTheme.serifBody(13))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("2026年6月16日")
+                                .font(AppTheme.monoLabel(11))
+                                .foregroundStyle(.tertiary)
+                        }
+
+                        HStack(spacing: 4) {
+                            Image(systemName: "person.2")
+                                .font(.system(size: 10 * fontManager.scale))
+                                .foregroundStyle(.secondary)
+                            Text("Ruoxue Wu, Ruchun Zuo")
+                                .font(AppTheme.serifBody(12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(14)
+                    .background(Color.primary.opacity(0.03))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                    )
+                }
+            }
+            .padding(.horizontal, 4)
         }
     }
 

@@ -40,6 +40,24 @@ struct SubmissionTrackerApp: App {
                 Button("新增稿件") { showingNewForm = true }
                     .keyboardShortcut("n", modifiers: .command)
             }
+
+            CommandGroup(after: .toolbar) {
+                Divider()
+                Button("放大字号") {
+                    FontSizeManager.shared.zoomIn()
+                }
+                .keyboardShortcut("+", modifiers: .command)
+
+                Button("缩小字号") {
+                    FontSizeManager.shared.zoomOut()
+                }
+                .keyboardShortcut("-", modifiers: .command)
+
+                Button("实际大小 (100%)") {
+                    FontSizeManager.shared.reset()
+                }
+                .keyboardShortcut("0", modifiers: .command)
+            }
         }
         .defaultSize(width: 1150, height: 720)
         #endif

@@ -6,6 +6,7 @@ import SwiftData
 struct ManuscriptListView: View {
     @Query private var allManuscripts: [Manuscript]
     @EnvironmentObject var filter: FilterState
+    @ObservedObject private var fontManager = FontSizeManager.shared
     @Binding var selection: Manuscript?
     @Binding var showingNewForm: Bool
 
@@ -29,6 +30,7 @@ struct ManuscriptListView: View {
             let hit = m.title.localizedStandardContains(t)
                 || m.venue.localizedStandardContains(t)
                 || m.notes.localizedStandardContains(t)
+                || m.collaborators.items.contains { $0.localizedStandardContains(t) }
                 || m.tags.items.contains { $0.localizedStandardContains(t) }
             if !hit { return false }
         }
@@ -139,7 +141,7 @@ struct ManuscriptListView: View {
             }
             .padding(.vertical, 6)
         }
-        .searchable(text: $filter.searchText, placement: .toolbar, prompt: "搜索标题 / 期刊 / 标签 / 备注")
+        .searchable(text: $filter.searchText, placement: .toolbar, prompt: "搜索标题 / 期刊 / 合作者 / 标签")
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Text("共 \(allManuscripts.count) 篇")
@@ -161,6 +163,7 @@ struct ManuscriptListView: View {
 /// 列表行
 struct ManuscriptRow: View {
     let manuscript: Manuscript
+    @ObservedObject private var fontManager = FontSizeManager.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -174,7 +177,7 @@ struct ManuscriptRow: View {
             }
             HStack(spacing: 8) {
                 Image(systemName: AppTheme.venueIcon(manuscript.venueType))
-                    .font(.system(size: 10))
+                    .font(.system(size: 10 * fontManager.scale))
                     .foregroundStyle(.secondary)
                 Text(manuscript.venue)
                     .font(AppTheme.serifBody(12))
@@ -185,13 +188,15 @@ struct ManuscriptRow: View {
                     .font(AppTheme.monoLabel(11))
                     .foregroundStyle(.tertiary)
             }
-            if !manuscript.tags.items.isEmpty {
+            if !manuscript.collaborators.items.isEmpty {
                 HStack(spacing: 4) {
-                    ForEach(manuscript.tags.items.prefix(3), id: \.self) { tag in
-                        Text("#\(tag)")
-                            .font(AppTheme.monoLabel(10))
-                            .foregroundStyle(.secondary)
-                    }
+                    Image(systemName: "person.2")
+                        .font(.system(size: 9 * fontManager.scale))
+                        .foregroundStyle(.secondary.opacity(0.8))
+                    Text(manuscript.collaborators.items.joined(separator: ", "))
+                        .font(AppTheme.serifBody(11))
+                        .lineLimit(1)
+                        .foregroundStyle(.secondary)
                 }
             }
         }

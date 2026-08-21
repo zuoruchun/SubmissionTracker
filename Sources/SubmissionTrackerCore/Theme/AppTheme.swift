@@ -2,7 +2,8 @@ import SwiftUI
 
 /// 视觉主题："研究者的私人笔记本"
 /// 米白纸张底色、衬线标题、等宽字体做日期/状态标签、克制强调色。
-enum AppTheme {
+@MainActor
+public enum AppTheme {
 
     // MARK: - 底色
 
@@ -66,34 +67,123 @@ enum AppTheme {
 
     // MARK: - 字体
 
+    public static var fontScale: CGFloat {
+        FontSizeManager.shared.scale
+    }
+
     /// 衬线标题
-    static func serifTitle(_ size: CGFloat) -> Font {
-        .system(size: size, weight: .semibold, design: .serif)
+    public static func serifTitle(_ size: CGFloat) -> Font {
+        .system(size: size * fontScale, weight: .semibold, design: .serif)
     }
 
     /// 衬线正文
-    static func serifBody(_ size: CGFloat = 14) -> Font {
-        .system(size: size, weight: .regular, design: .serif)
+    public static func serifBody(_ size: CGFloat = 14) -> Font {
+        .system(size: size * fontScale, weight: .regular, design: .serif)
     }
 
     /// 等宽字体：日期 / 状态标签
-    static func monoLabel(_ size: CGFloat = 12) -> Font {
-        .system(size: size, weight: .medium, design: .monospaced)
+    public static func monoLabel(_ size: CGFloat = 12) -> Font {
+        .system(size: size * fontScale, weight: .medium, design: .monospaced)
     }
 
     /// 状态徽章
     static func statusBadge(_ status: ManuscriptStatus) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 4 * fontScale) {
             Image(systemName: statusIcon(status))
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 9 * fontScale, weight: .semibold))
             Text(status.displayNameZh)
                 .font(monoLabel(11))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.horizontal, 8 * fontScale)
+        .padding(.vertical, 3 * fontScale)
         .background(statusColor(status).opacity(0.15))
         .foregroundStyle(statusColor(status))
         .clipShape(Capsule())
+    }
+}
+
+// MARK: - 字体缩放档位与响应式管理器
+
+public enum FontSizeScaleLevel: String, CaseIterable, Identifiable, Sendable {
+    case compact = "compact"       // 85%
+    case standard = "standard"     // 100%
+    case medium = "medium"         // 115%
+    case large = "large"           // 130%
+    case extraLarge = "extraLarge" // 145%
+
+    public var id: String { rawValue }
+
+    public var displayNameZh: String {
+        switch self {
+        case .compact: return "小字 (85%)"
+        case .standard: return "标准 (100%)"
+        case .medium: return "偏大 (115%)"
+        case .large: return "大字 (130%)"
+        case .extraLarge: return "特大 (145%)"
+        }
+    }
+
+    public var scaleFactor: CGFloat {
+        switch self {
+        case .compact: return 0.85
+        case .standard: return 1.0
+        case .medium: return 1.15
+        case .large: return 1.30
+        case .extraLarge: return 1.45
+        }
+    }
+
+    public var previous: FontSizeScaleLevel {
+        switch self {
+        case .compact: return .compact
+        case .standard: return .compact
+        case .medium: return .standard
+        case .large: return .medium
+        case .extraLarge: return .large
+        }
+    }
+
+    public var next: FontSizeScaleLevel {
+        switch self {
+        case .compact: return .standard
+        case .standard: return .medium
+        case .medium: return .large
+        case .large: return .extraLarge
+        case .extraLarge: return .extraLarge
+        }
+    }
+}
+
+/// 全局字体缩放响应式管理器
+@MainActor
+public final class FontSizeManager: ObservableObject {
+    public static let shared = FontSizeManager()
+
+    @Published public var currentLevel: FontSizeScaleLevel = .standard {
+        didSet {
+            UserDefaults.standard.set(currentLevel.rawValue, forKey: "STFontSizeScaleLevel")
+        }
+    }
+
+    public init() {
+        let savedRaw = UserDefaults.standard.string(forKey: "STFontSizeScaleLevel") ?? ""
+        self.currentLevel = FontSizeScaleLevel(rawValue: savedRaw) ?? .standard
+    }
+
+    public var scale: CGFloat {
+        currentLevel.scaleFactor
+    }
+
+    public func zoomIn() {
+        currentLevel = currentLevel.next
+    }
+
+    public func zoomOut() {
+        currentLevel = currentLevel.previous
+    }
+
+    public func reset() {
+        currentLevel = .standard
     }
 }
 

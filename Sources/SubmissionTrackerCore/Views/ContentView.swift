@@ -9,6 +9,7 @@ import AppKit
 public struct ContentView: View {
     @Query private var allManuscripts: [Manuscript]
     @StateObject private var filter = FilterState()
+    @ObservedObject private var fontManager = FontSizeManager.shared
     @State private var selection: Manuscript? = nil
     @Binding var showingNewForm: Bool
     @AppStorage("STMainViewMode") private var viewModeRaw: String = "detail"
